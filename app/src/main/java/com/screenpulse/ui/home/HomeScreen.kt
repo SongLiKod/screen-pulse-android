@@ -276,6 +276,11 @@ fun HomeScreen(
                 },
                 recordMode = if (recordMode == RecordMode.FULL_SCREEN) stringResource(R.string.full_screen_record)
                 else stringResource(R.string.region_record),
+                onAudioModeClick = {
+                    val modes = AudioMode.entries
+                    val nextIndex = (modes.indexOf(audioMode) + 1) % modes.size
+                    settingsViewModel.setAudioMode(modes[nextIndex])
+                },
                 onRecordModeClick = {
                     val newMode = if (recordMode == RecordMode.FULL_SCREEN) RecordMode.CUSTOM_REGION else RecordMode.FULL_SCREEN
                     settingsViewModel.setRecordMode(newMode)
@@ -475,6 +480,7 @@ private fun CurrentParamsCard(
     frameRate: String,
     audioMode: String,
     recordMode: String,
+    onAudioModeClick: () -> Unit = {},
     onRecordModeClick: () -> Unit = {},
     isRecording: Boolean = false
 ) {
@@ -490,7 +496,33 @@ private fun CurrentParamsCard(
             Spacer(modifier = Modifier.height(8.dp))
             ParamRow(stringResource(R.string.param_resolution), resolution)
             ParamRow(stringResource(R.string.param_frame_rate), frameRate)
-            ParamRow(stringResource(R.string.param_audio), audioMode)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isRecording) { onAudioModeClick() }
+                    .padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(stringResource(R.string.param_audio), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        audioMode,
+                        color = if (isRecording) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        else MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (!isRecording) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

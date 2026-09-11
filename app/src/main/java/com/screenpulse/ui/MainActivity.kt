@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -105,7 +106,7 @@ class MainActivity : AppCompatActivity() {
                             route = Screen.VideoPreview.route,
                             arguments = listOf(navArgument("filePath") { type = NavType.StringType })
                         ) { backStackEntry ->
-                            val filePath = backStackEntry.arguments?.getString("filePath") ?: ""
+                            val filePath = Uri.decode(backStackEntry.arguments?.getString("filePath") ?: "")
                             VideoPreviewScreen(
                                 filePath = filePath,
                                 onBack = { navController.popBackStack() }
@@ -115,7 +116,7 @@ class MainActivity : AppCompatActivity() {
                             route = Screen.VideoTrim.route,
                             arguments = listOf(navArgument("filePath") { type = NavType.StringType })
                         ) { backStackEntry ->
-                            val filePath = backStackEntry.arguments?.getString("filePath") ?: ""
+                            val filePath = Uri.decode(backStackEntry.arguments?.getString("filePath") ?: "")
                             VideoTrimScreen(
                                 filePath = filePath,
                                 onBack = { navController.popBackStack() },

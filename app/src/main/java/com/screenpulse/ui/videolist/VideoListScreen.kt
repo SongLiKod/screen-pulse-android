@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import android.media.MediaMetadataRetriever
 import com.screenpulse.R
 import com.screenpulse.util.LogManager
 import java.io.File
@@ -247,17 +248,22 @@ private fun VideoCard(
 
 private fun loadVideos(context: Context): List<VideoItem> {
     val items = mutableListOf<VideoItem>()
+    val retriever = MediaMetadataRetriever()
 
     val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
     if (dir.exists()) {
         dir.listFiles { file -> file.extension == "mp4" }?.forEach { file ->
+            val duration = try {
+                retriever.setDataSource(file.absolutePath)
+                formatDuration(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L)
+            } catch (_: Exception) { "00:00" }
             items.add(
                 VideoItem(
                     file = file,
                     name = file.name,
                     size = file.length(),
                     lastModified = file.lastModified(),
-                    duration = "00:00",
+                    duration = duration,
                     displayPath = file.absolutePath
                 )
             )
@@ -272,13 +278,17 @@ private fun loadVideos(context: Context): List<VideoItem> {
                 treeDir.listFiles()
                     ?.filter { it.isFile && it.name?.endsWith(".mp4") == true }
                     ?.forEach { doc ->
+                        val duration = try {
+                            retriever.setDataSource(context, doc.uri)
+                            formatDuration(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L)
+                        } catch (_: Exception) { "00:00" }
                         items.add(
                             VideoItem(
                                 uri = doc.uri,
                                 name = doc.name ?: "video.mp4",
                                 size = doc.length(),
                                 lastModified = doc.lastModified(),
-                                duration = "00:00",
+                                duration = duration,
                                 displayPath = doc.uri.toString()
                             )
                         )
@@ -289,7 +299,20 @@ private fun loadVideos(context: Context): List<VideoItem> {
         }
     }
 
+    try { retriever.release() } catch (_: Exception) {}
     return items.sortedByDescending { it.lastModified }
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%02d:%02d", minutes, seconds)
+    }
 }
 
 private fun loadCustomSaveTreeUri(context: Context): Uri? {
