@@ -96,6 +96,7 @@ class ScreenRecordService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var encoderInputSurface: Surface? = null
+    private var regionCropRenderer: RegionCropRenderer? = null
     private var mediaCodec: MediaCodec? = null
     private var micAudioRecord: AudioRecord? = null
     private var systemAudioRecord: AudioRecord? = null
@@ -222,9 +223,12 @@ class ScreenRecordService : Service() {
             for (i in seconds downTo 1) {
                 RecordingStateManager.updateCountdown(i)
                 stateCallback?.onCountdownTick(i)
+                // Send countdown update to floating window
+                sendCountdownToFloatingWindow(i)
                 delay(1000L)
             }
             RecordingStateManager.updateCountdown(0)
+            sendCountdownToFloatingWindow(0)
             startRecordingInternal(resultCode, resultData)
         }
     }
@@ -309,7 +313,10 @@ class ScreenRecordService : Service() {
             NativeBridge.nativeInit()
 
             setupMediaMuxer()
-            setupMediaCodec(width, height)
+            // For CUSTOM_REGION mode, configure MediaCodec at crop region size (not full screen)
+            val codecWidth = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) customWidth else width
+            val codecHeight = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) customHeight else height
+            setupMediaCodec(codecWidth, codecHeight)
             setupVirtualDisplay(width, height, metrics.densityDpi)
 
             // Set isRecording BEFORE starting encode loops so the while-loop condition passes.
@@ -427,13 +434,100 @@ class ScreenRecordService : Service() {
 
     private fun setupVirtualDisplay(width: Int, height: Int, densityDpi: Int) {
         LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: start, ${width}x$height, density=$densityDpi, mode=${if (currentRecordMode == RecordMode.CUSTOM_REGION) "custom" else "full"}")
-        recordWidth = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0) customWidth else width
-        recordHeight = if (currentRecordMode == RecordMode.CUSTOM_REGION && customHeight > 0) customHeight else height
-        recordDensityDpi = densityDpi
-        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: final size=${recordWidth}x$recordHeight, density=$recordDensityDpi")
 
-        virtualDisplay = try {
-            mediaProjection?.createVirtualDisplay(
+        if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) {
+            // Custom region mode: use RegionCropRenderer to crop the region
+            // MediaCodec is configured at crop region size
+            // VirtualDisplay captures full screen, renderer crops to encoder surface
+            recordWidth = customWidth
+            recordHeight = customHeight
+            recordDensityDpi = densityDpi
+
+            val renderer = RegionCropRenderer()
+            if (!renderer.init(encoderInputSurface!!, width, height, customOffsetX, customOffsetY, customWidth, customHeight)) {
+                LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: RegionCropRenderer init failed, falling back to full screen")
+                regionCropRenderer = null
+                recordWidth = width
+                recordHeight = height
+                virtualDisplay = try {
+                    mediaProjection?.createVirtualDisplay(
+                        "ScreenPulse",
+                        recordWidth,
+                        recordHeight,
+                        recordDensityDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                        encoderInputSurface,
+                        null,
+                        null
+                    )
+                } catch (e: Exception) {
+                    LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
+                    throw e
+                }
+            } else {
+                regionCropRenderer = renderer
+                LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: RegionCropRenderer initialized, creating VirtualDisplay at full screen ${width}x$height")
+                virtualDisplay = try {
+                    mediaProjection?.createVirtualDisplay(
+                        "ScreenPulse",
+                        width,
+                        height,
+                        densityDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                        renderer.getInputSurface(),
+                        null,
+                        null
+                    )
+                } catch (e: Exception) {
+                    LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
+                    throw e
+                }
+            }
+        } else {
+            // Full screen mode: VirtualDisplay writes directly to encoder surface
+            recordWidth = width
+            recordHeight = height
+            recordDensityDpi = densityDpi
+            virtualDisplay = try {
+                mediaProjection?.createVirtualDisplay(
+                    "ScreenPulse",
+                    recordWidth,
+                    recordHeight,
+                    recordDensityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    encoderInputSurface,
+                    null,
+                    null
+                )
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
+                throw e
+            }
+        }
+
+        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: complete, display=${virtualDisplay?.display?.displayId}, recordSize=${recordWidth}x${recordHeight}, cropRenderer=${regionCropRenderer != null}")
+    }
+
+    private fun recreateVirtualDisplay() {
+        if (virtualDisplay != null || encoderInputSurface == null) return
+        if (regionCropRenderer != null) {
+            // CUSTOM_REGION mode: recreate VirtualDisplay at full screen with renderer's surface
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
+                "ScreenPulse",
+                metrics.widthPixels,
+                metrics.heightPixels,
+                metrics.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                regionCropRenderer?.getInputSurface(),
+                null,
+                null
+            )
+        } else {
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "ScreenPulse",
                 recordWidth,
                 recordHeight,
@@ -443,25 +537,7 @@ class ScreenRecordService : Service() {
                 null,
                 null
             )
-        } catch (e: Exception) {
-            LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
-            throw e
         }
-        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: complete, display=${virtualDisplay?.display?.displayId}")
-    }
-
-    private fun recreateVirtualDisplay() {
-        if (virtualDisplay != null || encoderInputSurface == null) return
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenPulse",
-            recordWidth,
-            recordHeight,
-            recordDensityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            encoderInputSurface,
-            null,
-            null
-        )
     }
 
     private fun setupMicAudioRecord() {
@@ -655,6 +731,8 @@ class ScreenRecordService : Service() {
             try {
                 while (isActive && isRecording) {
                     if (!isPaused) {
+                        // For CUSTOM_REGION mode, render cropped frames to encoder surface
+                        regionCropRenderer?.drawFrame()
                         drainVideoEncoder()
                     }
                     delay(10)
@@ -1055,6 +1133,9 @@ class ScreenRecordService : Service() {
         runCatching { virtualDisplay?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: virtualDisplay release failed", it) }
         virtualDisplay = null
 
+        runCatching { regionCropRenderer?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: regionCropRenderer release failed", it) }
+        regionCropRenderer = null
+
         runCatching { encoderInputSurface?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: encoderInputSurface release failed", it) }
         encoderInputSurface = null
 
@@ -1177,6 +1258,18 @@ class ScreenRecordService : Service() {
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_RECORD, "syncFloatingWindow failed", e)
             e.printStackTrace()
+        }
+    }
+
+    private fun sendCountdownToFloatingWindow(remaining: Int) {
+        try {
+            val intent = Intent(this, com.screenpulse.floatingwindow.FloatingWindowService::class.java).apply {
+                action = com.screenpulse.floatingwindow.FloatingWindowService.ACTION_UPDATE_COUNTDOWN
+                putExtra(com.screenpulse.floatingwindow.FloatingWindowService.EXTRA_COUNTDOWN_REMAINING, remaining)
+            }
+            startService(intent)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "sendCountdownToFloatingWindow failed", e)
         }
     }
 
