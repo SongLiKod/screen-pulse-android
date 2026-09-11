@@ -274,8 +274,19 @@ class ScreenRecordService : Service() {
             width = customResolutionWidth
             height = customResolutionHeight
         } else {
-            width = currentResolution.width
-            height = currentResolution.height
+            // Adapt resolution to device orientation: Resolution enum values are landscape,
+            // but the device may be in portrait — swap width/height to match.
+            val resW = currentResolution.width
+            val resH = currentResolution.height
+            val isDevicePortrait = metrics.heightPixels > metrics.widthPixels
+            val isResLandscape = resW > resH
+            if (isDevicePortrait && isResLandscape) {
+                width = resH
+                height = resW
+            } else {
+                width = resW
+                height = resH
+            }
         }
 
         // Guard against double-start: if already recording or stopping, bail out

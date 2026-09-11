@@ -103,7 +103,8 @@ class FloatingWindowService : Service() {
         var initialTouchX = 0f
         var initialTouchY = 0f
 
-        floatingView?.findViewById<View>(R.id.floating_container)?.setOnTouchListener { _, event ->
+        // Drag on the entire floating bar
+        floatingView?.findViewById<View>(R.id.floating_root)?.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = layoutParams?.x ?: 0
@@ -118,16 +119,14 @@ class FloatingWindowService : Service() {
                     windowManager?.updateViewLayout(floatingView, layoutParams)
                     true
                 }
-                MotionEvent.ACTION_UP -> {
-                    val dx = Math.abs(event.rawX - initialTouchX)
-                    val dy = Math.abs(event.rawY - initialTouchY)
-                    if (dx < 10 && dy < 10) {
-                        handleClick()
-                    }
-                    true
-                }
+                MotionEvent.ACTION_UP -> true
                 else -> false
             }
+        }
+
+        // Pause/resume button click
+        floatingView?.findViewById<View>(R.id.floating_pause_btn)?.setOnClickListener {
+            handleClick()
         }
 
         floatingView?.findViewById<View>(R.id.floating_screenshot_btn)?.setOnClickListener {
@@ -222,7 +221,7 @@ class FloatingWindowService : Service() {
     }
 
     private fun updateFloatingIcon() {
-        val iconView = floatingView?.findViewById<ImageView>(R.id.floating_icon)
+        val pauseBtn = floatingView?.findViewById<ImageView>(R.id.floating_pause_btn)
 
         val iconRes = when (currentState) {
             RecordingState.IDLE -> R.drawable.ic_record
@@ -230,10 +229,7 @@ class FloatingWindowService : Service() {
             RecordingState.PAUSED -> R.drawable.ic_play
             RecordingState.COUNTDOWN -> R.drawable.ic_record
         }
-        iconView?.setImageResource(iconRes)
-
-        val bgRes = if (isDarkMode()) R.drawable.floating_btn_bg_dark else R.drawable.floating_btn_bg
-        floatingView?.findViewById<View>(R.id.floating_container)?.setBackgroundResource(bgRes)
+        pauseBtn?.setImageResource(iconRes)
 
         val durationView = floatingView?.findViewById<android.widget.TextView>(R.id.floating_duration)
         val isRecording = currentState == RecordingState.RECORDING || currentState == RecordingState.PAUSED
