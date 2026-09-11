@@ -343,6 +343,7 @@ class ScreenRecordService : Service() {
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_RECORD, "Recording setup FAILED", e)
             e.printStackTrace()
+            isRecording = false
             cleanup()
             RecordingStateManager.updateState(RecordingState.IDLE)
             stateCallback?.onError(e.message ?: "Recording failed")
@@ -524,43 +525,47 @@ class ScreenRecordService : Service() {
             val mixedBuffer = ByteArray(4096)
             val processedBuffer = ByteArray(4096)
 
-            while (isActive && isRecording) {
-                if (isPaused) {
-                    delay(10)
-                    continue
-                }
+            try {
+                while (isActive && isRecording) {
+                    if (isPaused) {
+                        delay(10)
+                        continue
+                    }
 
-                when (currentAudioMode) {
-                    AudioMode.MIC_ONLY -> {
-                        val readSize = micAudioRecord?.read(buffer, 0, buffer.size) ?: 0
-                        if (readSize > 0) {
-                            val sampleCount = readSize / 2
-                            NativeBridge.nativeApplyNoiseReduction(buffer, processedBuffer, sampleCount)
-                            encodeAudioData(processedBuffer, readSize)
+                    when (currentAudioMode) {
+                        AudioMode.MIC_ONLY -> {
+                            val readSize = micAudioRecord?.read(buffer, 0, buffer.size) ?: 0
+                            if (readSize > 0) {
+                                val sampleCount = readSize / 2
+                                NativeBridge.nativeApplyNoiseReduction(buffer, processedBuffer, sampleCount)
+                                encodeAudioData(processedBuffer, readSize)
+                            }
+                        }
+                        AudioMode.SYSTEM_ONLY -> {
+                            val readSize = systemAudioRecord?.read(buffer, 0, buffer.size) ?: 0
+                            if (readSize > 0) {
+                                encodeAudioData(buffer, readSize)
+                            }
+                        }
+                        AudioMode.MIXED -> {
+                            val micRead = micAudioRecord?.read(buffer, 0, buffer.size) ?: 0
+                            val sysRead = systemAudioRecord?.read(systemBuffer, 0, systemBuffer.size) ?: 0
+                            if (micRead > 0 && sysRead > 0) {
+                                val sampleCount = minOf(micRead, sysRead) / 2
+                                NativeBridge.nativeMixAudio(
+                                    systemBuffer, buffer, mixedBuffer,
+                                    systemVolume / 100f, micVolume / 100f,
+                                    sampleCount
+                                )
+                                NativeBridge.nativeApplyNoiseReduction(mixedBuffer, processedBuffer, sampleCount)
+                                encodeAudioData(processedBuffer, sampleCount * 2)
+                            }
                         }
                     }
-                    AudioMode.SYSTEM_ONLY -> {
-                        val readSize = systemAudioRecord?.read(buffer, 0, buffer.size) ?: 0
-                        if (readSize > 0) {
-                            encodeAudioData(buffer, readSize)
-                        }
-                    }
-                    AudioMode.MIXED -> {
-                        val micRead = micAudioRecord?.read(buffer, 0, buffer.size) ?: 0
-                        val sysRead = systemAudioRecord?.read(systemBuffer, 0, systemBuffer.size) ?: 0
-                        if (micRead > 0 && sysRead > 0) {
-                            val sampleCount = minOf(micRead, sysRead) / 2
-                            NativeBridge.nativeMixAudio(
-                                systemBuffer, buffer, mixedBuffer,
-                                systemVolume / 100f, micVolume / 100f,
-                                sampleCount
-                            )
-                            NativeBridge.nativeApplyNoiseReduction(mixedBuffer, processedBuffer, sampleCount)
-                            encodeAudioData(processedBuffer, sampleCount * 2)
-                        }
-                    }
+                    delay(10)
                 }
-                delay(10)
+            } catch (_: CancellationException) {
+                // Coroutine cancelled (stop or destroy) – exit cleanly
             }
         }
     }
@@ -629,11 +634,15 @@ class ScreenRecordService : Service() {
 
     private fun startEncodeLoop() {
         encodeJob = serviceScope.launch(Dispatchers.IO) {
-            while (isActive && isRecording) {
-                if (!isPaused) {
-                    drainVideoEncoder()
+            try {
+                while (isActive && isRecording) {
+                    if (!isPaused) {
+                        drainVideoEncoder()
+                    }
+                    delay(10)
                 }
-                delay(10)
+            } catch (_: CancellationException) {
+                // Coroutine cancelled (stop or destroy) – exit cleanly
             }
         }
     }
@@ -976,40 +985,46 @@ class ScreenRecordService : Service() {
     }
 
     private fun cleanup() {
-        try {
-            LogManager.log(LogManager.TAG_RECORD, "cleanup: releasing resources")
-            encodeJob?.cancel()
-            audioEncodeJob?.cancel()
-            virtualDisplay?.release()
-            virtualDisplay = null
-            encoderInputSurface?.release()
-            encoderInputSurface = null
-            mediaCodec?.stop()
-            mediaCodec?.release()
-            mediaCodec = null
-            audioCodec?.stop()
-            audioCodec?.release()
-            audioCodec = null
-            micAudioRecord?.stop()
-            micAudioRecord?.release()
-            micAudioRecord = null
-            systemAudioRecord?.stop()
-            systemAudioRecord?.release()
-            systemAudioRecord = null
+        LogManager.log(LogManager.TAG_RECORD, "cleanup: releasing resources")
+        encodeJob?.cancel()
+        audioEncodeJob?.cancel()
+
+        // Release each resource independently so one failure doesn't skip the rest.
+        runCatching { virtualDisplay?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: virtualDisplay release failed", it) }
+        virtualDisplay = null
+
+        runCatching { encoderInputSurface?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: encoderInputSurface release failed", it) }
+        encoderInputSurface = null
+
+        runCatching { mediaCodec?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaCodec stop failed", it) }
+        runCatching { mediaCodec?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaCodec release failed", it) }
+        mediaCodec = null
+
+        runCatching { audioCodec?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: audioCodec stop failed", it) }
+        runCatching { audioCodec?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: audioCodec release failed", it) }
+        audioCodec = null
+
+        runCatching { micAudioRecord?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: micAudioRecord stop failed", it) }
+        runCatching { micAudioRecord?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: micAudioRecord release failed", it) }
+        micAudioRecord = null
+
+        runCatching { systemAudioRecord?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: systemAudioRecord stop failed", it) }
+        runCatching { systemAudioRecord?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: systemAudioRecord release failed", it) }
+        systemAudioRecord = null
+
+        runCatching {
             if (muxerStarted) {
                 mediaMuxer?.stop()
             }
-            mediaMuxer?.release()
-            mediaMuxer = null
-            muxerStarted = false
-            mediaProjection = null
+        }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stop failed", it) }
+        runCatching { mediaMuxer?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer release failed", it) }
+        mediaMuxer = null
+        muxerStarted = false
 
-            NativeBridge.nativeRelease()
-            LogManager.log(LogManager.TAG_RECORD, "cleanup done")
-        } catch (e: Exception) {
-            LogManager.log(LogManager.TAG_RECORD, "cleanup error", e)
-            e.printStackTrace()
-        }
+        mediaProjection = null
+
+        runCatching { NativeBridge.nativeRelease() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: nativeRelease failed", it) }
+        LogManager.log(LogManager.TAG_RECORD, "cleanup done")
     }
 
     private fun startDurationTracking() {
@@ -1125,12 +1140,12 @@ class ScreenRecordService : Service() {
 
     override fun onDestroy() {
         countdownJob?.cancel()
-        if (!isStopping) {
-            isStopping = true
-            isRecording = false
-            isPaused = false
-            cleanup()
-        }
+        isStopping = true
+        isRecording = false
+        isPaused = false
+        // Always clean up regardless of isStopping – the IO coroutine in handleStop
+        // may have been cancelled by serviceScope.cancel() below before it finished.
+        cleanup()
         serviceScope.cancel()
         super.onDestroy()
     }

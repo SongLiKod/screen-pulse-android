@@ -109,10 +109,6 @@ class RegionSelectActivity : Activity() {
 
     private inner class RegionOverlayView(context: Context) : View(context) {
 
-        private val dimPaint = Paint().apply {
-            color = Color.argb(128, 0, 0, 0)
-        }
-
         private val borderPaint = Paint().apply {
             color = ContextCompat.getColor(this@RegionSelectActivity, R.color.brand_green)
             style = Paint.Style.STROKE
@@ -120,17 +116,9 @@ class RegionSelectActivity : Activity() {
             isAntiAlias = true
         }
 
-        private val fillPaint = Paint().apply {
-            color = ContextCompat.getColor(this@RegionSelectActivity, R.color.light_green_bg)
-        }
-
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-
-            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dimPaint)
-
             if (isDrawing || currentRect.width() > 0) {
-                canvas.drawRect(currentRect, fillPaint)
                 canvas.drawRect(currentRect, borderPaint)
             }
         }
