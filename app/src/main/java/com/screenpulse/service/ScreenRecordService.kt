@@ -108,7 +108,8 @@ class ScreenRecordService : Service() {
     private var videoTrackIndex = -1
     private var audioTrackIndex = -1
     private var muxerStarted = false
-    private var bufferInfo = MediaCodec.BufferInfo()
+    private var videoBufferInfo = MediaCodec.BufferInfo()
+    private var audioBufferInfo = MediaCodec.BufferInfo()
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var durationJob: Job? = null
@@ -534,16 +535,16 @@ class ScreenRecordService : Service() {
         val muxer = mediaMuxer ?: return
 
         while (true) {
-            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
+            val outputIndex = codec.dequeueOutputBuffer(audioBufferInfo, 10000)
             when {
                 outputIndex >= 0 -> {
-                    val outputBuffer = codec.getOutputBuffer(outputIndex) ?: return
+                    val outputBuffer = codec.getOutputBuffer(outputIndex) ?: continue
 
-                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                        bufferInfo.size = 0
+                    if (audioBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                        audioBufferInfo.size = 0
                     }
 
-                    if (bufferInfo.size > 0) {
+                    if (audioBufferInfo.size > 0) {
                         if (audioTrackIndex == -1 && !muxerStarted) {
                             val format = codec.outputFormat
                             audioTrackIndex = try {
@@ -559,20 +560,20 @@ class ScreenRecordService : Service() {
                         }
 
                         if (muxerStarted && audioTrackIndex != -1 && audioTrackIndex != -2) {
-                            outputBuffer.position(bufferInfo.offset)
-                            outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                            muxer.writeSampleData(audioTrackIndex, outputBuffer, bufferInfo)
+                            outputBuffer.position(audioBufferInfo.offset)
+                            outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
+                            muxer.writeSampleData(audioTrackIndex, outputBuffer, audioBufferInfo)
                         }
                     }
 
                     codec.releaseOutputBuffer(outputIndex, false)
 
-                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                    if (audioBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                         break
                     }
                 }
                 outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> break
-                else -> break
+                else -> { }
             }
         }
     }
@@ -593,39 +594,95 @@ class ScreenRecordService : Service() {
         val muxer = mediaMuxer ?: return
 
         while (true) {
-            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
+            val outputIndex = codec.dequeueOutputBuffer(videoBufferInfo, 10000)
             when {
                 outputIndex >= 0 -> {
-                    val outputBuffer = codec.getOutputBuffer(outputIndex) ?: return
+                    val outputBuffer = codec.getOutputBuffer(outputIndex) ?: continue
 
-                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                        bufferInfo.size = 0
+                    if (videoBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                        videoBufferInfo.size = 0
                     }
 
-                    if (bufferInfo.size > 0) {
-                        if (videoTrackIndex == -1 && bufferInfo.size > 0) {
+                    if (videoBufferInfo.size > 0) {
+                        if (videoTrackIndex == -1) {
                             val format = codec.outputFormat
                             videoTrackIndex = muxer.addTrack(format)
                             tryStartMer(muxer)
                         }
 
                         if (muxerStarted && videoTrackIndex != -1) {
-                            outputBuffer.position(bufferInfo.offset)
-                            outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                            muxer.writeSampleData(videoTrackIndex, outputBuffer, bufferInfo)
+                            outputBuffer.position(videoBufferInfo.offset)
+                            outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
+                            muxer.writeSampleData(videoTrackIndex, outputBuffer, videoBufferInfo)
                         }
                     }
 
                     codec.releaseOutputBuffer(outputIndex, false)
 
-                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                    if (videoBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                         break
                     }
                 }
                 outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> break
-                else -> break
+                else -> { }
             }
         }
+    }
+
+    private fun drainVideoEncoderOnce(): Boolean {
+        val codec = mediaCodec ?: return true
+        val muxer = mediaMuxer ?: return true
+        val outputIndex = codec.dequeueOutputBuffer(videoBufferInfo, 5000)
+        if (outputIndex >= 0) {
+            val outputBuffer = codec.getOutputBuffer(outputIndex) ?: return false
+            if (videoBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                videoBufferInfo.size = 0
+            }
+            if (videoBufferInfo.size > 0) {
+                if (videoTrackIndex == -1) {
+                    val format = codec.outputFormat
+                    videoTrackIndex = muxer.addTrack(format)
+                    tryStartMer(muxer)
+                }
+                if (muxerStarted && videoTrackIndex != -1) {
+                    outputBuffer.position(videoBufferInfo.offset)
+                    outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
+                    muxer.writeSampleData(videoTrackIndex, outputBuffer, videoBufferInfo)
+                }
+            }
+            codec.releaseOutputBuffer(outputIndex, false)
+            return videoBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+        }
+        return false
+    }
+
+    private fun drainAudioEncoderOnce(): Boolean {
+        val codec = audioCodec ?: return true
+        val muxer = mediaMuxer ?: return true
+        val outputIndex = codec.dequeueOutputBuffer(audioBufferInfo, 5000)
+        if (outputIndex >= 0) {
+            val outputBuffer = codec.getOutputBuffer(outputIndex) ?: return false
+            if (audioBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                audioBufferInfo.size = 0
+            }
+            if (audioBufferInfo.size > 0) {
+                if (audioTrackIndex == -1 && !muxerStarted) {
+                    audioTrackIndex = try { muxer.addTrack(codec.outputFormat) } catch (e: Exception) { -2 }
+                    if (videoTrackIndex != -1 && !muxerStarted && audioTrackIndex != -2) {
+                        muxer.start()
+                        muxerStarted = true
+                    }
+                }
+                if (muxerStarted && audioTrackIndex != -1 && audioTrackIndex != -2) {
+                    outputBuffer.position(audioBufferInfo.offset)
+                    outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
+                    muxer.writeSampleData(audioTrackIndex, outputBuffer, audioBufferInfo)
+                }
+            }
+            codec.releaseOutputBuffer(outputIndex, false)
+            return audioBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+        }
+        return false
     }
 
     private fun tryStartMer(muxer: MediaMuxer) {
@@ -682,13 +739,29 @@ class ScreenRecordService : Service() {
 
         try {
             mediaCodec?.signalEndOfInputStream()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "signalEndOfInputStream failed", e)
+        }
+
+        // Thorough drain: keep draining until EOS or timeout (up to 2 seconds)
+        val drainDeadline = System.currentTimeMillis() + 2000
+        var videoEosReceived = false
+        var audioEosReceived = false
         try {
-            drainVideoEncoder()
+            while (System.currentTimeMillis() < drainDeadline && (!videoEosReceived || !audioEosReceived)) {
+                if (!videoEosReceived) {
+                    videoEosReceived = drainVideoEncoderOnce()
+                }
+                if (!audioEosReceived) {
+                    audioEosReceived = drainAudioEncoderOnce()
+                }
+                if (!videoEosReceived || !audioEosReceived) {
+                    Thread.sleep(10)
+                }
+            }
         } catch (_: Exception) {}
-        try {
-            drainAudioEncoder()
-        } catch (_: Exception) {}
+
+        LogManager.log(LogManager.TAG_RECORD, "Final drain done. videoEos=$videoEosReceived audioEos=$audioEosReceived videoTrack=$videoTrackIndex audioTrack=$audioTrackIndex muxerStarted=$muxerStarted")
 
         try {
             if (!muxerStarted && videoTrackIndex != -1) {
@@ -696,7 +769,9 @@ class ScreenRecordService : Service() {
                 muxerStarted = true
                 LogManager.log(LogManager.TAG_RECORD, "handleStop: force start muxer (video-only)")
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "force start muxer failed", e)
+        }
 
         cleanup()
 
