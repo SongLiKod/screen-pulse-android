@@ -22,7 +22,14 @@ import android.media.MediaMuxer
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ImageFormat
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.Typeface
+import android.net.Uri
 import android.media.ImageReader
 import android.os.Build
 import android.os.Environment
@@ -45,6 +52,7 @@ import com.screenpulse.repository.CountdownMode
 import com.screenpulse.repository.FrameRate
 import com.screenpulse.repository.RecordMode
 import com.screenpulse.repository.Resolution
+import com.screenpulse.repository.WatermarkType
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.jni.NativeBridge
 import com.screenpulse.shortcut.RecordingStateManager
@@ -138,6 +146,8 @@ class ScreenRecordService : Service() {
     private var micVolume = 100
     private var watermarkEnabled = false
     private var watermarkText = ""
+    private var watermarkType = WatermarkType.TEXT
+    private var watermarkImageUri = ""
     private var pipEnabled = false
     private var customResolutionWidth = 1920
     private var customResolutionHeight = 1080
@@ -197,6 +207,8 @@ class ScreenRecordService : Service() {
         micVolume = intent.getIntExtra(EXTRA_MIC_VOLUME, 100)
         watermarkEnabled = intent.getBooleanExtra(EXTRA_WATERMARK_ENABLED, false)
         watermarkText = intent.getStringExtra(EXTRA_WATERMARK_TEXT) ?: ""
+        watermarkType = WatermarkType.fromValue(intent.getIntExtra(EXTRA_WATERMARK_TYPE, WatermarkType.TEXT.value))
+        watermarkImageUri = intent.getStringExtra(EXTRA_WATERMARK_IMAGE_URI) ?: ""
         pipEnabled = intent.getBooleanExtra(EXTRA_PIP_ENABLED, false)
         customResolutionWidth = intent.getIntExtra(EXTRA_CUSTOM_RESOLUTION_WIDTH, 1920)
         customResolutionHeight = intent.getIntExtra(EXTRA_CUSTOM_RESOLUTION_HEIGHT, 1080)
@@ -433,19 +445,39 @@ class ScreenRecordService : Service() {
     }
 
     private fun setupVirtualDisplay(width: Int, height: Int, densityDpi: Int) {
-        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: start, ${width}x$height, density=$densityDpi, mode=${if (currentRecordMode == RecordMode.CUSTOM_REGION) "custom" else "full"}")
+        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: start, ${width}x$height, density=$densityDpi, mode=${if (currentRecordMode == RecordMode.CUSTOM_REGION) "custom" else "full"} watermark=$watermarkEnabled")
 
-        if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) {
-            // Custom region mode: use RegionCropRenderer to crop the region
-            // MediaCodec is configured at crop region size
-            // VirtualDisplay captures full screen, renderer crops to encoder surface
-            recordWidth = customWidth
-            recordHeight = customHeight
+        val useRenderer = (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) || watermarkEnabled
+
+        if (useRenderer) {
+            // Use RegionCropRenderer for either region cropping or watermark overlay (or both)
+            val cropX: Int
+            val cropY: Int
+            val cropWidth: Int
+            val cropHeight: Int
+
+            if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) {
+                // Custom region mode: crop to specified region
+                cropX = customOffsetX
+                cropY = customOffsetY
+                cropWidth = customWidth
+                cropHeight = customHeight
+                recordWidth = customWidth
+                recordHeight = customHeight
+            } else {
+                // Full screen with watermark: pass-through (no cropping)
+                cropX = 0
+                cropY = 0
+                cropWidth = width
+                cropHeight = height
+                recordWidth = width
+                recordHeight = height
+            }
             recordDensityDpi = densityDpi
 
             val renderer = RegionCropRenderer()
-            if (!renderer.init(encoderInputSurface!!, width, height, customOffsetX, customOffsetY, customWidth, customHeight)) {
-                LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: RegionCropRenderer init failed, falling back to full screen")
+            if (!renderer.init(encoderInputSurface!!, width, height, cropX, cropY, cropWidth, cropHeight)) {
+                LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: RegionCropRenderer init failed, falling back to direct")
                 regionCropRenderer = null
                 recordWidth = width
                 recordHeight = height
@@ -465,6 +497,20 @@ class ScreenRecordService : Service() {
                     throw e
                 }
             } else {
+                // Set watermark if enabled
+                if (watermarkEnabled) {
+                    try {
+                        val watermarkBitmap = createWatermarkBitmap()
+                        if (watermarkBitmap != null) {
+                            renderer.setWatermark(watermarkBitmap, recordWidth, recordHeight)
+                            watermarkBitmap.recycle()
+                            LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: watermark set on renderer")
+                        }
+                    } catch (e: Exception) {
+                        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: watermark setup failed", e)
+                    }
+                }
+
                 regionCropRenderer = renderer
                 LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: RegionCropRenderer initialized, creating VirtualDisplay at full screen ${width}x$height")
                 virtualDisplay = try {
@@ -484,7 +530,7 @@ class ScreenRecordService : Service() {
                 }
             }
         } else {
-            // Full screen mode: VirtualDisplay writes directly to encoder surface
+            // Full screen mode without watermark: VirtualDisplay writes directly to encoder surface
             recordWidth = width
             recordHeight = height
             recordDensityDpi = densityDpi
@@ -1121,6 +1167,59 @@ class ScreenRecordService : Service() {
             e.printStackTrace()
         } finally {
             bitmap.recycle()
+        }
+    }
+
+    private fun createWatermarkBitmap(): Bitmap? {
+        return try {
+            when (watermarkType) {
+                WatermarkType.IMAGE -> {
+                    if (watermarkImageUri.isEmpty()) return null
+                    val uri = Uri.parse(watermarkImageUri)
+                    val inputStream = contentResolver.openInputStream(uri) ?: return null
+                    val options = BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    BitmapFactory.decodeStream(inputStream, null, options)
+                    inputStream.close()
+
+                    // Scale down to max 256px width
+                    val maxWidth = 256
+                    val sampleSize = maxOf(1, options.outWidth / maxWidth)
+                    val decodeOptions = BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                    }
+                    val inputStream2 = contentResolver.openInputStream(uri) ?: return null
+                    val bitmap = BitmapFactory.decodeStream(inputStream2, null, decodeOptions)
+                    inputStream2.close()
+                    LogManager.log(LogManager.TAG_RECORD, "createWatermarkBitmap: image ${bitmap?.width}x${bitmap?.height}")
+                    bitmap
+                }
+                WatermarkType.TEXT -> {
+                    if (watermarkText.isEmpty()) return null
+                    val textSize = 48f
+                    val padding = 24f
+                    val paint = Paint().apply {
+                        color = Color.WHITE
+                        alpha = 128
+                        this.textSize = textSize
+                        typeface = Typeface.DEFAULT_BOLD
+                        isAntiAlias = true
+                    }
+                    val textBounds = Rect()
+                    paint.getTextBounds(watermarkText, 0, watermarkText.length, textBounds)
+                    val width = (textBounds.width() + padding * 2).toInt()
+                    val height = (textBounds.height() + padding * 2).toInt()
+                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    canvas.drawText(watermarkText, padding, height - padding, paint)
+                    LogManager.log(LogManager.TAG_RECORD, "createWatermarkBitmap: text '${watermarkText}' ${bitmap.width}x${bitmap.height}")
+                    bitmap
+                }
+            }
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "createWatermarkBitmap: failed", e)
+            null
         }
     }
 

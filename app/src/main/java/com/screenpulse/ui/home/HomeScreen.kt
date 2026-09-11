@@ -33,6 +33,7 @@ import com.screenpulse.repository.AudioMode
 import com.screenpulse.repository.CountdownMode
 import com.screenpulse.repository.CustomRegion
 import com.screenpulse.repository.RecordMode
+import com.screenpulse.repository.WatermarkType
 import com.screenpulse.service.ScreenRecordService
 import com.screenpulse.ui.regionselect.RegionSelectActivity
 import com.screenpulse.viewmodel.RecordingState
@@ -69,6 +70,8 @@ fun HomeScreen(
     val micVolume by settingsViewModel.micVolume.collectAsState()
     val watermarkEnabled by settingsViewModel.watermarkEnabled.collectAsState()
     val watermarkText by settingsViewModel.watermarkText.collectAsState()
+    val watermarkType by settingsViewModel.watermarkType.collectAsState()
+    val watermarkImageUri by settingsViewModel.watermarkImageUri.collectAsState()
     val pipEnabled by settingsViewModel.pipEnabled.collectAsState()
     val pipSize by settingsViewModel.pipSize.collectAsState()
     val bitrateMode by settingsViewModel.bitrateMode.collectAsState()
@@ -139,6 +142,8 @@ fun HomeScreen(
                     micVolume = micVolume,
                     watermarkEnabled = watermarkEnabled,
                     watermarkText = watermarkText,
+                    watermarkType = watermarkType,
+                    watermarkImageUri = watermarkImageUri,
                     customResolutionWidth = customResolutionWidth,
                     customResolutionHeight = customResolutionHeight,
                     regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
@@ -645,6 +650,8 @@ private fun startRecording(
     micVolume: Int,
     watermarkEnabled: Boolean,
     watermarkText: String,
+    watermarkType: WatermarkType,
+    watermarkImageUri: String,
     customResolutionWidth: Int,
     customResolutionHeight: Int,
     customCountdownSeconds: Int,
@@ -676,6 +683,8 @@ private fun startRecording(
         putExtra(ScreenRecordService.EXTRA_MIC_VOLUME, micVolume)
         putExtra(ScreenRecordService.EXTRA_WATERMARK_ENABLED, watermarkEnabled)
         putExtra(ScreenRecordService.EXTRA_WATERMARK_TEXT, watermarkText)
+        putExtra(ScreenRecordService.EXTRA_WATERMARK_TYPE, watermarkType.value)
+        putExtra(ScreenRecordService.EXTRA_WATERMARK_IMAGE_URI, watermarkImageUri)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_WIDTH, customResolutionWidth)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_HEIGHT, customResolutionHeight)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_WIDTH, regionWidth)

@@ -37,6 +37,7 @@
         </activity>
 
         <activity
+            android:name=".ui.regionselect.RegionSelectActivity"
             android:theme="@style/Theme.ScreenPulse.Transparent" />
 
         <service

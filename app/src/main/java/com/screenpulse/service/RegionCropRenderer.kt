@@ -1,19 +1,27 @@
 package com.screenpulse.service
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.SurfaceTexture
 import android.opengl.EGL14
 import android.opengl.GLES20
+import android.opengl.GLUtils
 import android.view.Surface
 import com.screenpulse.util.LogManager
 
 /**
  * Uses OpenGL ES to crop a region from a full-screen VirtualDisplay capture
  * and render the cropped region to the encoder's input Surface.
+ * Also supports rendering a watermark (text or image) overlay on the video.
  *
  * Flow:
  * 1. VirtualDisplay captures full screen → writes to [inputSurface] (SurfaceTexture)
  * 2. On each frame, [drawFrame] reads the texture, crops the region, renders to encoder surface
- * 3. MediaCodec reads the cropped frame from its input surface
+ * 3. If watermark is set, renders watermark overlay on top
+ * 4. MediaCodec reads the frame from its input surface
  */
 class RegionCropRenderer {
 
@@ -39,19 +47,49 @@ class RegionCropRenderer {
                 gl_FragColor = texture2D(sTexture, vTexCoord);
             }
         """
+
+        private val WATERMARK_VERTEX_SHADER = """
+            attribute vec4 aPosition;
+            attribute vec2 aTexCoord;
+            varying vec2 vTexCoord;
+            void main() {
+                gl_Position = aPosition;
+                vTexCoord = aTexCoord;
+            }
+        """
+
+        private val WATERMARK_FRAGMENT_SHADER = """
+            precision mediump float;
+            varying vec2 vTexCoord;
+            uniform sampler2D sTexture;
+            void main() {
+                gl_FragColor = texture2D(sTexture, vTexCoord);
+            }
+        """
     }
 
     private var eglDisplay = EGL14.EGL_NO_DISPLAY
     private var eglContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface = EGL14.EGL_NO_SURFACE
 
+    // Screen capture OES texture
     private var textureId = 0
     private var surfaceTexture: SurfaceTexture? = null
     private var inputSurface: Surface? = null
 
+    // Screen capture shader program
     private var program = 0
     private var positionHandle = 0
     private var texCoordHandle = 0
+
+    // Watermark shader program
+    private var watermarkProgram = 0
+    private var watermarkPositionHandle = 0
+    private var watermarkTexCoordHandle = 0
+    private var watermarkTextureId = 0
+    private var watermarkVertexBuffer: java.nio.FloatBuffer? = null
+    private var watermarkTexCoordBuffer: java.nio.FloatBuffer? = null
+    private var hasWatermark = false
 
     // Texture coordinate buffer for the crop region
     private var cropTexCoordBuffer: java.nio.FloatBuffer? = null
@@ -64,15 +102,6 @@ class RegionCropRenderer {
 
     /**
      * Initialize EGL context, compile shaders, create SurfaceTexture.
-     *
-     * @param encoderSurface The MediaCodec input surface to render cropped frames to
-     * @param screenWidth Full screen width
-     * @param screenHeight Full screen height
-     * @param cropX Crop region X offset
-     * @param cropY Crop region Y offset
-     * @param cropWidth Crop region width
-     * @param cropHeight Crop region height
-     * @return true if initialization succeeded
      */
     fun init(
         encoderSurface: Surface,
@@ -92,25 +121,27 @@ class RegionCropRenderer {
             return false
         }
 
-        // 2. Compile shaders
+        // 2. Compile screen capture shaders
         if (!setupGL()) {
             LogManager.log(TAG, "init: GL setup failed")
             release()
             return false
         }
 
-        // 3. Create OES texture + SurfaceTexture
+        // 3. Compile watermark shaders
+        if (!setupWatermarkGL()) {
+            LogManager.log(TAG, "init: Watermark GL setup failed, watermark will be disabled")
+            // Non-fatal: recording can proceed without watermark
+        }
+
+        // 4. Create OES texture + SurfaceTexture
         if (!createSurfaceTexture(screenWidth, screenHeight)) {
             LogManager.log(TAG, "init: SurfaceTexture creation failed")
             release()
             return false
         }
 
-        // 4. Calculate crop texture coordinates
-        // SurfaceTexture OES texture has (0,0) at bottom-left, but screen has (0,0) at top-left
-        // The SurfaceTexture transform matrix handles the Y-flip, so we use normalized
-        // coordinates based on the screen dimensions.
-        // After getTransformMatrix is applied, tex coords are in [0,1] with (0,0) at top-left.
+        // 5. Calculate crop texture coordinates
         val left = cropX.toFloat() / screenWidth.toFloat()
         val right = (cropX + cropWidth).toFloat() / screenWidth.toFloat()
         val top = cropY.toFloat() / screenHeight.toFloat()
@@ -118,12 +149,11 @@ class RegionCropRenderer {
 
         LogManager.log(TAG, "init: crop tex coords: left=$left top=$top right=$right bottom=$bottom")
 
-        // Texture coordinates for the crop region (will be used with transform matrix)
         val texCoords = floatArrayOf(
-            left, bottom,   // bottom-left
-            right, bottom,  // bottom-right
-            left, top,      // top-left
-            right, top      // top-right
+            left, bottom,
+            right, bottom,
+            left, top,
+            right, top
         )
         cropTexCoordBuffer = java.nio.ByteBuffer.allocateDirect(texCoords.size * 4)
             .order(java.nio.ByteOrder.nativeOrder())
@@ -131,12 +161,11 @@ class RegionCropRenderer {
             .put(texCoords)
             .apply { position(0) }
 
-        // Vertex positions for full-screen quad (NDC)
         val vertices = floatArrayOf(
-            -1f, -1f,   // bottom-left
-             1f, -1f,   // bottom-right
-            -1f,  1f,   // top-left
-             1f,  1f    // top-right
+            -1f, -1f,
+             1f, -1f,
+            -1f,  1f,
+             1f,  1f
         )
         vertexBuffer = java.nio.ByteBuffer.allocateDirect(vertices.size * 4)
             .order(java.nio.ByteOrder.nativeOrder())
@@ -144,8 +173,8 @@ class RegionCropRenderer {
             .put(vertices)
             .apply { position(0) }
 
-        // 5. Set frame available listener
-        surfaceTexture?.setOnFrameAvailableListener({ st ->
+        // 6. Set frame available listener
+        surfaceTexture?.setOnFrameAvailableListener({ _ ->
             synchronized(lock) { frameAvailable = true }
         })
 
@@ -153,17 +182,97 @@ class RegionCropRenderer {
         return true
     }
 
-    /**
-     * Get the input Surface for the VirtualDisplay to write to.
-     * The VirtualDisplay should be created at FULL SCREEN resolution with this surface.
-     */
     fun getInputSurface(): Surface? = inputSurface
 
     /**
-     * Draw a cropped frame to the encoder surface.
-     * Should be called when a new frame is available from the VirtualDisplay.
+     * Set a watermark bitmap to be rendered on top of each frame.
+     * The watermark is positioned at the bottom-right corner with margin.
      *
-     * @return true if a frame was drawn, false if no frame was available
+     * @param bitmap The watermark image (with alpha channel for transparency)
+     * @param videoWidth The output video frame width in pixels
+     * @param videoHeight The output video frame height in pixels
+     */
+    fun setWatermark(bitmap: Bitmap, videoWidth: Int, videoHeight: Int) {
+        if (watermarkProgram == 0) {
+            LogManager.log(TAG, "setWatermark: watermark program not compiled, skipping")
+            return
+        }
+
+        try {
+            // Make EGL context current
+            if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+                LogManager.log(TAG, "setWatermark: eglMakeCurrent failed")
+                return
+            }
+
+            // Create watermark texture
+            val textures = IntArray(1)
+            GLES20.glGenTextures(1, textures, 0)
+            watermarkTextureId = textures[0]
+
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, watermarkTextureId)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+
+            // Calculate watermark position in NDC (bottom-right corner with margin)
+            val marginPixels = 48 // margin from edge in video pixels
+            val wmWidth = bitmap.width
+            val wmHeight = bitmap.height
+
+            // Convert pixel dimensions to NDC
+            val marginNdcX = marginPixels.toFloat() / videoWidth.toFloat() * 2f
+            val marginNdcY = marginPixels.toFloat() / videoHeight.toFloat() * 2f
+            val wmWidthNdc = wmWidth.toFloat() / videoWidth.toFloat() * 2f
+            val wmHeightNdc = wmHeight.toFloat() / videoHeight.toFloat() * 2f
+
+            // Bottom-right corner: right edge at 1 - margin, bottom edge at -1 + margin
+            val right = 1f - marginNdcX
+            val left = right - wmWidthNdc
+            val bottom = -1f + marginNdcY
+            val top = bottom + wmHeightNdc
+
+            LogManager.log(TAG, "setWatermark: bitmap=${wmWidth}x${wmHeight} video=${videoWidth}x${videoHeight} ndc=[$left,$bottom,$right,$top]")
+
+            // Watermark vertex positions (NDC)
+            val wmVertices = floatArrayOf(
+                left, bottom,
+                right, bottom,
+                left, top,
+                right, top
+            )
+            watermarkVertexBuffer = java.nio.ByteBuffer.allocateDirect(wmVertices.size * 4)
+                .order(java.nio.ByteOrder.nativeOrder())
+                .asFloatBuffer()
+                .put(wmVertices)
+                .apply { position(0) }
+
+            // Watermark texture coordinates (standard 0-1 mapping)
+            val wmTexCoords = floatArrayOf(
+                0f, 1f,  // bottom-left
+                1f, 1f,  // bottom-right
+                0f, 0f,  // top-left
+                1f, 0f   // top-right
+            )
+            watermarkTexCoordBuffer = java.nio.ByteBuffer.allocateDirect(wmTexCoords.size * 4)
+                .order(java.nio.ByteOrder.nativeOrder())
+                .asFloatBuffer()
+                .put(wmTexCoords)
+                .apply { position(0) }
+
+            hasWatermark = true
+            LogManager.log(TAG, "setWatermark: watermark set successfully")
+        } catch (e: Exception) {
+            LogManager.log(TAG, "setWatermark: failed", e)
+            hasWatermark = false
+        }
+    }
+
+    /**
+     * Draw a cropped frame (with optional watermark) to the encoder surface.
      */
     fun drawFrame(): Boolean {
         synchronized(lock) {
@@ -172,36 +281,28 @@ class RegionCropRenderer {
         }
 
         try {
-            // Update the GL texture with the new frame from SurfaceTexture
             surfaceTexture?.updateTexImage()
 
-            // Make the encoder EGL surface current
             if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
                 LogManager.log(TAG, "drawFrame: eglMakeCurrent failed")
                 return false
             }
 
-            // Get the transform matrix from SurfaceTexture
             val texMatrix = FloatArray(16)
             surfaceTexture?.getTransformMatrix(texMatrix)
 
-            // Apply the transform matrix to crop texture coordinates
-            // The transform matrix maps raw texture coords to actual texture coords
-            // We need to transform our crop coords through this matrix
             val transformedCoords = transformCropCoords(texMatrix)
 
             // Clear
             GLES20.glClearColor(0f, 0f, 0f, 1f)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-            // Use program
+            // Draw screen capture quad
             GLES20.glUseProgram(program)
 
-            // Set vertex positions
             GLES20.glEnableVertexAttribArray(positionHandle)
             GLES20.glVertexAttribPointer(positionHandle, 2, GLES20.GL_FLOAT, false, 8, vertexBuffer)
 
-            // Set transformed texture coordinates
             val transformedBuffer = java.nio.ByteBuffer.allocateDirect(transformedCoords.size * 4)
                 .order(java.nio.ByteOrder.nativeOrder())
                 .asFloatBuffer()
@@ -211,23 +312,23 @@ class RegionCropRenderer {
             GLES20.glEnableVertexAttribArray(texCoordHandle)
             GLES20.glVertexAttribPointer(texCoordHandle, 2, GLES20.GL_FLOAT, false, 8, transformedBuffer)
 
-            // Bind the OES texture
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(0x8D65, textureId)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "sTexture"), 0)
 
-            // Draw triangle strip (4 vertices = 2 triangles)
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
-            // Disable vertex attributes
             GLES20.glDisableVertexAttribArray(positionHandle)
             GLES20.glDisableVertexAttribArray(texCoordHandle)
 
-            // Set presentation time from SurfaceTexture
+            // Draw watermark overlay
+            if (hasWatermark) {
+                renderWatermark()
+            }
+
+            // Set presentation time and swap
             val timestampNs = surfaceTexture?.timestamp ?: 0L
             EGL14.eglPresentationTimeANDROID(eglDisplay, eglSurface, timestampNs)
-
-            // Swap buffers to push the frame to the encoder
             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
 
             return true
@@ -237,31 +338,53 @@ class RegionCropRenderer {
         }
     }
 
-    /**
-     * Transform crop texture coordinates through the SurfaceTexture transform matrix.
-     * The transform matrix maps from [0,1] texture space to the actual texture coordinates
-     * accounting for any transformations (rotation, scaling, etc.) applied by the system.
-     */
+    private fun renderWatermark() {
+        if (watermarkProgram == 0 || watermarkTextureId == 0) return
+
+        // Enable alpha blending for watermark transparency
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+
+        GLES20.glUseProgram(watermarkProgram)
+
+        // Set vertex positions
+        GLES20.glEnableVertexAttribArray(watermarkPositionHandle)
+        GLES20.glVertexAttribPointer(watermarkPositionHandle, 2, GLES20.GL_FLOAT, false, 8, watermarkVertexBuffer)
+
+        // Set texture coordinates
+        GLES20.glEnableVertexAttribArray(watermarkTexCoordHandle)
+        GLES20.glVertexAttribPointer(watermarkTexCoordHandle, 2, GLES20.GL_FLOAT, false, 8, watermarkTexCoordBuffer)
+
+        // Bind watermark texture
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, watermarkTextureId)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(watermarkProgram, "sTexture"), 0)
+
+        // Draw watermark quad
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+
+        GLES20.glDisableVertexAttribArray(watermarkPositionHandle)
+        GLES20.glDisableVertexAttribArray(watermarkTexCoordHandle)
+
+        // Disable blending
+        GLES20.glDisable(GLES20.GL_BLEND)
+    }
+
     private fun transformCropCoords(texMatrix: FloatArray): FloatArray {
         val left = cropTexCoordBuffer?.get(0) ?: 0f
         val bottom = cropTexCoordBuffer?.get(1) ?: 0f
         val right = cropTexCoordBuffer?.get(2) ?: 0f
         val top = cropTexCoordBuffer?.get(5) ?: 0f
 
-        // Transform each corner through the matrix
-        // texMatrix is a 4x4 column-major matrix
-        // For a 2D point (x, y), the transformed point is:
-        // x' = m[0]*x + m[4]*y + m[12]
-        // y' = m[1]*x + m[5]*y + m[13]
         val m = texMatrix
         return floatArrayOf(
-            transformPoint(left, bottom, m),   // bottom-left x, y
+            transformPoint(left, bottom, m),
             transformPointY(left, bottom, m),
-            transformPoint(right, bottom, m),  // bottom-right x, y
+            transformPoint(right, bottom, m),
             transformPointY(right, bottom, m),
-            transformPoint(left, top, m),      // top-left x, y
+            transformPoint(left, top, m),
             transformPointY(left, top, m),
-            transformPoint(right, top, m),     // top-right x, y
+            transformPoint(right, top, m),
             transformPointY(right, top, m)
         )
     }
@@ -287,7 +410,6 @@ class RegionCropRenderer {
             return false
         }
 
-        // Configure EGL for recording (EGL_RECORDABLE_ANDROID)
         val attribList = intArrayOf(
             EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
             EGL14.EGL_RED_SIZE, 8,
@@ -305,7 +427,6 @@ class RegionCropRenderer {
             return false
         }
 
-        // Create EGL context with OpenGL ES 2.0
         val contextAttribs = intArrayOf(
             EGL14.EGL_CONTEXT_CLIENT_VERSION, 2,
             EGL14.EGL_NONE
@@ -316,7 +437,6 @@ class RegionCropRenderer {
             return false
         }
 
-        // Create EGL surface for the encoder surface
         val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
         eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, configs[0], encoderSurface, surfaceAttribs, 0)
         if (eglSurface == EGL14.EGL_NO_SURFACE) {
@@ -324,7 +444,6 @@ class RegionCropRenderer {
             return false
         }
 
-        // Make current
         if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
             LogManager.log(TAG, "setupEGL: eglMakeCurrent failed")
             return false
@@ -335,21 +454,18 @@ class RegionCropRenderer {
     }
 
     private fun setupGL(): Boolean {
-        // Compile vertex shader
         val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER)
         if (vertexShader == 0) {
             LogManager.log(TAG, "setupGL: vertex shader compile failed")
             return false
         }
 
-        // Compile fragment shader
         val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER)
         if (fragmentShader == 0) {
             LogManager.log(TAG, "setupGL: fragment shader compile failed")
             return false
         }
 
-        // Link program
         program = GLES20.glCreateProgram()
         GLES20.glAttachShader(program, vertexShader)
         GLES20.glAttachShader(program, fragmentShader)
@@ -364,11 +480,44 @@ class RegionCropRenderer {
             return false
         }
 
-        // Get attribute locations
         positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
         texCoordHandle = GLES20.glGetAttribLocation(program, "aTexCoord")
 
         LogManager.log(TAG, "setupGL: success, program=$program pos=$positionHandle tex=$texCoordHandle")
+        return true
+    }
+
+    private fun setupWatermarkGL(): Boolean {
+        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, WATERMARK_VERTEX_SHADER)
+        if (vertexShader == 0) {
+            LogManager.log(TAG, "setupWatermarkGL: vertex shader compile failed")
+            return false
+        }
+
+        val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, WATERMARK_FRAGMENT_SHADER)
+        if (fragmentShader == 0) {
+            LogManager.log(TAG, "setupWatermarkGL: fragment shader compile failed")
+            return false
+        }
+
+        watermarkProgram = GLES20.glCreateProgram()
+        GLES20.glAttachShader(watermarkProgram, vertexShader)
+        GLES20.glAttachShader(watermarkProgram, fragmentShader)
+        GLES20.glLinkProgram(watermarkProgram)
+
+        val linkStatus = IntArray(1)
+        GLES20.glGetProgramiv(watermarkProgram, GLES20.GL_LINK_STATUS, linkStatus, 0)
+        if (linkStatus[0] != GLES20.GL_TRUE) {
+            LogManager.log(TAG, "setupWatermarkGL: program link failed: ${GLES20.glGetProgramInfoLog(watermarkProgram)}")
+            GLES20.glDeleteProgram(watermarkProgram)
+            watermarkProgram = 0
+            return false
+        }
+
+        watermarkPositionHandle = GLES20.glGetAttribLocation(watermarkProgram, "aPosition")
+        watermarkTexCoordHandle = GLES20.glGetAttribLocation(watermarkProgram, "aTexCoord")
+
+        LogManager.log(TAG, "setupWatermarkGL: success, program=$watermarkProgram pos=$watermarkPositionHandle tex=$watermarkTexCoordHandle")
         return true
     }
 
@@ -387,7 +536,6 @@ class RegionCropRenderer {
     }
 
     private fun createSurfaceTexture(screenWidth: Int, screenHeight: Int): Boolean {
-        // Create OES texture
         val textures = IntArray(1)
         GLES20.glGenTextures(1, textures, 0)
         textureId = textures[0]
@@ -398,11 +546,9 @@ class RegionCropRenderer {
         GLES20.glTexParameteri(0x8D65, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(0x8D65, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
 
-        // Create SurfaceTexture from the OES texture
         surfaceTexture = SurfaceTexture(textureId)
         surfaceTexture?.setDefaultBufferSize(screenWidth, screenHeight)
 
-        // Create a Surface from the SurfaceTexture for the VirtualDisplay
         inputSurface = Surface(surfaceTexture)
 
         LogManager.log(TAG, "createSurfaceTexture: success, textureId=$textureId")
@@ -410,18 +556,42 @@ class RegionCropRenderer {
     }
 
     /**
-     * Release all EGL/GL resources.
+     * Create a text watermark bitmap matching the floating watermark style.
      */
+    fun createTextWatermarkBitmap(text: String): Bitmap {
+        val textSize = 48f
+        val padding = 24f
+        val paint = Paint().apply {
+            color = Color.WHITE
+            alpha = 128 // 50% transparency
+            this.textSize = textSize
+            typeface = Typeface.DEFAULT_BOLD
+            isAntiAlias = true
+        }
+
+        val textBounds = android.graphics.Rect()
+        paint.getTextBounds(text, 0, text.length, textBounds)
+
+        val width = (textBounds.width() + padding * 2).toInt()
+        val height = (textBounds.height() + padding * 2).toInt()
+
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        // Draw text at bottom-left of the bitmap (since text draws from baseline)
+        canvas.drawText(text, padding, height - padding, paint)
+
+        return bitmap
+    }
+
     fun release() {
         LogManager.log(TAG, "release")
 
-        // Release input surface and SurfaceTexture first
         runCatching { inputSurface?.release() }
         inputSurface = null
         runCatching { surfaceTexture?.release() }
         surfaceTexture = null
 
-        // Delete GL texture
+        // Delete screen capture texture
         if (textureId != 0) {
             runCatching {
                 if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
@@ -431,7 +601,17 @@ class RegionCropRenderer {
             textureId = 0
         }
 
-        // Delete GL program
+        // Delete watermark texture
+        if (watermarkTextureId != 0) {
+            runCatching {
+                if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+                    GLES20.glDeleteTextures(1, intArrayOf(watermarkTextureId), 0)
+                }
+            }
+            watermarkTextureId = 0
+        }
+
+        // Delete screen capture program
         if (program != 0) {
             runCatching {
                 if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
@@ -441,19 +621,26 @@ class RegionCropRenderer {
             program = 0
         }
 
-        // Destroy EGL surface
+        // Delete watermark program
+        if (watermarkProgram != 0) {
+            runCatching {
+                if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+                    GLES20.glDeleteProgram(watermarkProgram)
+                }
+            }
+            watermarkProgram = 0
+        }
+
         if (eglSurface != EGL14.EGL_NO_SURFACE) {
             runCatching { EGL14.eglDestroySurface(eglDisplay, eglSurface) }
             eglSurface = EGL14.EGL_NO_SURFACE
         }
 
-        // Destroy EGL context
         if (eglContext != EGL14.EGL_NO_CONTEXT) {
             runCatching { EGL14.eglDestroyContext(eglDisplay, eglContext) }
             eglContext = EGL14.EGL_NO_CONTEXT
         }
 
-        // Terminate EGL display
         if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
             runCatching { EGL14.eglTerminate(eglDisplay) }
             eglDisplay = EGL14.EGL_NO_DISPLAY
@@ -461,8 +648,10 @@ class RegionCropRenderer {
 
         cropTexCoordBuffer = null
         vertexBuffer = null
+        watermarkVertexBuffer = null
+        watermarkTexCoordBuffer = null
+        hasWatermark = false
 
         LogManager.log(TAG, "release: complete")
     }
 }
-
