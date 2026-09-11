@@ -275,7 +275,12 @@ n            recordingViewModel.setRecordingState(newState)
                     AudioMode.MIXED -> stringResource(R.string.audio_short_mixed)
                 },
                 recordMode = if (recordMode == RecordMode.FULL_SCREEN) stringResource(R.string.full_screen_record)
-                else stringResource(R.string.region_record)
+                else stringResource(R.string.region_record),
+                onRecordModeClick = {
+                    val newMode = if (recordMode == RecordMode.FULL_SCREEN) RecordMode.CUSTOM_REGION else RecordMode.FULL_SCREEN
+                    settingsViewModel.setRecordMode(newMode)
+                },
+                isRecording = recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -469,7 +474,9 @@ private fun CurrentParamsCard(
     resolution: String,
     frameRate: String,
     audioMode: String,
-    recordMode: String
+    recordMode: String,
+    onRecordModeClick: () -> Unit = {},
+    isRecording: Boolean = false
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -484,7 +491,33 @@ private fun CurrentParamsCard(
             ParamRow(stringResource(R.string.param_resolution), resolution)
             ParamRow(stringResource(R.string.param_frame_rate), frameRate)
             ParamRow(stringResource(R.string.param_audio), audioMode)
-            ParamRow(stringResource(R.string.param_mode), recordMode)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isRecording) { onRecordModeClick() }
+                    .padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(stringResource(R.string.param_mode), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        recordMode,
+                        color = if (isRecording) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        else MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (!isRecording) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         }
     }
 }
