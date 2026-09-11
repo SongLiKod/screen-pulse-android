@@ -90,7 +90,7 @@ class RegionSelectActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 16f
             gravity = android.view.Gravity.CENTER
-            setBackgroundColor(Color.argb(128, 0, 0, 0))
+            setShadowLayer(6f, 0f, 0f, Color.BLACK)
             setPadding(32, 16, 32, 16)
         }
 
@@ -108,6 +108,10 @@ class RegionSelectActivity : Activity() {
     }
 
     private inner class RegionOverlayView(context: Context) : View(context) {
+
+        init {
+            setBackgroundColor(Color.TRANSPARENT)
+        }
 
         private val borderPaint = Paint().apply {
             color = ContextCompat.getColor(this@RegionSelectActivity, R.color.brand_green)

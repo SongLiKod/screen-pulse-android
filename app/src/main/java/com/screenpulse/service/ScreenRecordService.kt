@@ -273,19 +273,19 @@ class ScreenRecordService : Service() {
             height = currentResolution.height
         }
 
-        outputFile = createOutputFile()
-        LogManager.log(LogManager.TAG_RECORD,
-            "start recording: res=${currentResolution.value} ${width}x$height fps=${currentFrameRate.value} " +
-            "bitrate=${
-                if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
-            } audioMode=${currentAudioMode} recordMode=${currentRecordMode} out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
-
         // Guard against double-start: if already recording or stopping, bail out
         if (isRecording || isStopping) {
             LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal skipped: isRecording=$isRecording isStopping=$isStopping")
             RecordingStateManager.updateState(RecordingState.IDLE)
             return
         }
+
+        outputFile = createOutputFile()
+        LogManager.log(LogManager.TAG_RECORD,
+            "start recording: res=${currentResolution.value} ${width}x$height fps=${currentFrameRate.value} " +
+            "bitrate=${
+                if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
+            } audioMode=${currentAudioMode} recordMode=${currentRecordMode} out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
 
         try {
             NativeBridge.nativeInit()
@@ -803,8 +803,10 @@ class ScreenRecordService : Service() {
         // for up to 2 seconds and to prevent race conditions with encode-loop coroutines
         // (both sharing videoBufferInfo / audioBufferInfo on different threads).
         serviceScope.launch(Dispatchers.IO) {
-            // Wait for coroutine encode loops to exit gracefully after cancellation
-            delay(50)
+            // Wait for coroutine encode loops to exit – join() suspends until each
+            // job actually finishes, which is far more reliable than a fixed delay.
+            try { encodeJob?.join() } catch (_: CancellationException) {}
+            try { audioEncodeJob?.join() } catch (_: CancellationException) {}
 
             try {
                 mediaCodec?.signalEndOfInputStream()
@@ -1012,18 +1014,19 @@ class ScreenRecordService : Service() {
         runCatching { systemAudioRecord?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: systemAudioRecord release failed", it) }
         systemAudioRecord = null
 
-        runCatching {
-            if (muxerStarted) {
-                mediaMuxer?.stop()
-            }
-        }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stop failed", it) }
+        // Always try to stop the muxer to ensure the moov atom is written,
+        // even if muxerStarted flag got out of sync.
+        runCatching { mediaMuxer?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stop failed (may be expected)", it) }
         runCatching { mediaMuxer?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer release failed", it) }
         mediaMuxer = null
         muxerStarted = false
 
+        // Stop the MediaProjection so the system screen-share indicator is dismissed.
+        runCatching { mediaProjection?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaProjection stop failed", it) }
         mediaProjection = null
 
         runCatching { NativeBridge.nativeRelease() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: nativeRelease failed", it) }
+
         LogManager.log(LogManager.TAG_RECORD, "cleanup done")
     }
 
