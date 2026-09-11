@@ -85,6 +85,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val customSaveTreeUri: StateFlow<String> = repository.customSaveTreeUri
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
+    val customRegion: StateFlow<CustomRegion> = repository.customRegion
+        .stateIn(viewModelScope, SharingStarted.Eagerly, CustomRegion(0, 0, 0, 0))
+
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { repository.setThemeMode(mode) }
     fun setAudioMode(mode: AudioMode) = viewModelScope.launch { repository.setAudioMode(mode) }
     fun setResolution(res: Resolution) = viewModelScope.launch { repository.setResolution(res) }
@@ -111,6 +114,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setCustomResolutionWidth(width: Int) = viewModelScope.launch { repository.setCustomResolutionWidth(width) }
     fun setCustomResolutionHeight(height: Int) = viewModelScope.launch { repository.setCustomResolutionHeight(height) }
     fun setBitrateMode(mode: BitrateMode) = viewModelScope.launch { repository.setBitrateMode(mode) }
+    fun setCustomRegion(region: CustomRegion) = viewModelScope.launch { repository.setCustomRegion(region) }
 
     fun setLanguage(language: Language) = viewModelScope.launch {
         repository.setLanguage(language)

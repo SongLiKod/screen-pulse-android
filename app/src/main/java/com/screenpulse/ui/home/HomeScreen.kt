@@ -90,26 +90,6 @@ fun HomeScreen(
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showOverlayDialog by remember { mutableStateOf(false) }
 
-    val regionSelectLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        LogManager.log(LogManager.TAG_UI, "Region select result: code=${result.resultCode} data=${result.data != null}")
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val d = result.data!!
-            val region = CustomRegion(
-                width = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_WIDTH, 0),
-                height = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_HEIGHT, 0),
-                offsetX = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_X, 0),
-                offsetY = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)
-            )
-            settingsViewModel.setCustomRegion(region)
-            LogManager.log(LogManager.TAG_UI, "Region selected: ${region.offsetX},${region.offsetY} ${region.width}x${region.height} -> asking MediaProjection")
-            mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
-        } else {
-            LogManager.log(LogManager.TAG_UI, "Region selection cancelled by user")
-        }
-    }
-
     val mediaProjectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -147,15 +127,23 @@ fun HomeScreen(
         }
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        LogManager.log(LogManager.TAG_UI, "Permission result: allGranted=$allGranted perms=$permissions")
-        if (allGranted) {
-            continueToRecordingStart()
+    val regionSelectLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        LogManager.log(LogManager.TAG_UI, "Region select result: code=${result.resultCode} data=${result.data != null}")
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val d = result.data!!
+            val region = CustomRegion(
+                width = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_WIDTH, 0),
+                height = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_HEIGHT, 0),
+                offsetX = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_X, 0),
+                offsetY = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)
+            )
+            settingsViewModel.setCustomRegion(region)
+            LogManager.log(LogManager.TAG_UI, "Region selected: ${region.offsetX},${region.offsetY} ${region.width}x${region.height} -> asking MediaProjection")
+            mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
         } else {
-            showPermissionDialog = true
+            LogManager.log(LogManager.TAG_UI, "Region selection cancelled by user")
         }
     }
 
@@ -174,6 +162,18 @@ fun HomeScreen(
                 LogManager.log(LogManager.TAG_UI, "Launching MediaProjection permission")
                 mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
             }
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        LogManager.log(LogManager.TAG_UI, "Permission result: allGranted=$allGranted perms=$permissions")
+        if (allGranted) {
+            continueToRecordingStart()
+        } else {
+            showPermissionDialog = true
         }
     }
 
