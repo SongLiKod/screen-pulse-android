@@ -1019,12 +1019,24 @@ class ScreenRecordService : Service() {
         runCatching { systemAudioRecord?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: systemAudioRecord release failed", it) }
         systemAudioRecord = null
 
-        // Always try to stop the muxer to ensure the moov atom is written,
-        // even if muxerStarted flag got out of sync.
-        runCatching { mediaMuxer?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stop failed (may be expected)", it) }
+        // Stop the muxer to write the moov atom, then force-sync the file to disk.
+        runCatching {
+            mediaMuxer?.stop()
+            LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stopped OK")
+        }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stop failed", it) }
         runCatching { mediaMuxer?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer release failed", it) }
         mediaMuxer = null
         muxerStarted = false
+
+        // Force the output file to disk so the moov atom is guaranteed to be persisted.
+        runCatching {
+            outputFile?.let { file ->
+                if (file.exists() && file.length() > 0) {
+                    java.io.RandomAccessFile(file, "rw").channel.use { it.force(true) }
+                    LogManager.log(LogManager.TAG_RECORD, "cleanup: file synced to disk, size=${file.length()}")
+                }
+            }
+        }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: file sync failed", it) }
 
         // Stop the MediaProjection so the system screen-share indicator is dismissed.
         runCatching { mediaProjection?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaProjection stop failed", it) }

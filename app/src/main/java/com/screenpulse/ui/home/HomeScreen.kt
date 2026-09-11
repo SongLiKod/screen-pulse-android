@@ -295,17 +295,11 @@ n            recordingViewModel.setRecordingState(newState)
                     onClick = onNavigateToSettings
                 )
                 ActionButton(
-                    icon = if (recordingState == RecordingState.PAUSED) Icons.Default.PlayArrow else Icons.Default.Pause,
-                    label = if (recordingState == RecordingState.PAUSED) stringResource(R.string.btn_resume)
-                    else stringResource(R.string.btn_pause),
+                    icon = Icons.Default.CameraAlt,
+                    label = stringResource(R.string.screenshot),
                     onClick = {
-                        val action = if (recordingState == RecordingState.RECORDING) {
-                            ScreenRecordService.ACTION_PAUSE
-                        } else {
-                            ScreenRecordService.ACTION_RESUME
-                        }
                         context.startService(Intent(context, ScreenRecordService::class.java).apply {
-                            this.action = action
+                            action = ScreenRecordService.ACTION_SCREENSHOT
                         })
                     },
                     enabled = recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED

@@ -47,6 +47,7 @@ fun SettingsScreen(
     val compressionMode by settingsViewModel.compressionMode.collectAsState()
     val recordMode by settingsViewModel.recordMode.collectAsState()
     val countdownMode by settingsViewModel.countdownMode.collectAsState()
+    val customCountdownSeconds by settingsViewModel.customCountdownSeconds.collectAsState()
     val watermarkEnabled by settingsViewModel.watermarkEnabled.collectAsState()
     val watermarkText by settingsViewModel.watermarkText.collectAsState()
     val watermarkType by settingsViewModel.watermarkType.collectAsState()
