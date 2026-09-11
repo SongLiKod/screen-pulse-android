@@ -729,22 +729,22 @@ private fun SavePathSelector(
     }
 }
 
-private fun defaultSavePath(context: Context): String {
+private fun defaultSavePath(context: android.content.Context): String {
     return try {
-        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES)
-        File(dir, "ScreenPulse").absolutePath
+        val base = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: context.filesDir
+        File(base, "ScreenPulse").absolutePath
     } catch (e: Exception) {
         "ScreenPulse"
     }
 }
 
-private fun openFolder(context: Context, customTreeUri: String) {
+private fun openFolder(context: android.content.Context, customTreeUri: String) {
     return try {
         val intent: Intent
         if (customTreeUri.isNotEmpty()) {
             val treeUri = android.net.Uri.parse(customTreeUri)
             intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(treeUri, androidx.documentfile.provider.DocumentFile.MIME_TYPE_DIR)
+                setDataAndType(treeUri, android.provider.DocumentsContract.Document.MIME_TYPE_DIR)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)

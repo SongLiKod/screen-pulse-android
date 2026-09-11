@@ -122,10 +122,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         val app = getApplication<Application>()
         val prefs = app.getSharedPreferences("screen_pulse_save_path", android.content.Context.MODE_PRIVATE)
         prefs.edit().putString("custom_save_tree_uri", uri).apply()
-        if (uri.isNotEmpty() && app.contentResolver?.takePersistableUriPermission != null) {
-            val resolver = app.contentResolver
+        if (uri.isNotEmpty()) {
             val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            runCatching { resolver.takePersistableUriPermission(uri.toUri(), flags) }
+            runCatching { app.contentResolver.takePersistableUriPermission(uri.toUri(), flags) }
         }
     }
 

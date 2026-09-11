@@ -77,7 +77,7 @@ fun VideoPreviewScreen(
                             if (isContentUri) {
                                 setVideoURI(uri)
                             } else {
-                                setVideoURI(Uri.fromFile(file))
+                                setVideoURI(Uri.fromFile(File(filePath)))
                             }
                         }
                     }
@@ -91,7 +91,7 @@ fun VideoPreviewScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        if (file.exists()) "文件无效或为空" else "文件不存在",
+                        if (file != null && file.exists()) "文件无效或为空" else "文件不存在",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
