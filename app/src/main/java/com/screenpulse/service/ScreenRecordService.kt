@@ -64,6 +64,7 @@ class ScreenRecordService : Service() {
         const val ACTION_PAUSE = "com.screenpulse.action.PAUSE"
         const val ACTION_RESUME = "com.screenpulse.action.RESUME"
         const val ACTION_SCREENSHOT = "com.screenpulse.action.SCREENSHOT"
+        const val ACTION_SCREENSHOT_ONLY = "com.screenpulse.action.SCREENSHOT_ONLY"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_RESOLUTION = "resolution"
@@ -162,6 +163,7 @@ class ScreenRecordService : Service() {
             ACTION_PAUSE -> handlePause()
             ACTION_RESUME -> handleResume()
             ACTION_SCREENSHOT -> takeScreenshot()
+            ACTION_SCREENSHOT_ONLY -> handleScreenshotOnly(intent)
         }
         return START_STICKY
     }
@@ -925,6 +927,48 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "Screenshot skipped: mediaProjection is null")
             return
         }
+        captureAndSaveScreenshot(projection)
+    }
+
+    private fun handleScreenshotOnly(intent: Intent) {
+        LogManager.log(LogManager.TAG_RECORD, "Screenshot-only requested")
+        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
+        val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(EXTRA_RESULT_DATA)
+        }
+        if (resultData == null) {
+            LogManager.log(LogManager.TAG_RECORD, "Screenshot-only skipped: resultData is null")
+            stopSelf()
+            return
+        }
+
+        startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+
+        val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val projection = try {
+            projectionManager.getMediaProjection(resultCode, resultData)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "Screenshot-only: getMediaProjection FAILED", e)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+
+        captureAndSaveScreenshot(projection)
+
+        // Clean up after screenshot is taken
+        serviceScope.launch(Dispatchers.Main) {
+            delay(1000L) // Wait for screenshot capture to complete
+            projection.stop()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
+    private fun captureAndSaveScreenshot(projection: MediaProjection) {
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
