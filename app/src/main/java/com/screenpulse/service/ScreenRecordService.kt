@@ -242,6 +242,19 @@ class ScreenRecordService : Service() {
         }
         LogManager.log(LogManager.TAG_RECORD, "getMediaProjection OK")
 
+        // Android 14+ requires registering a callback before createVirtualDisplay
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    LogManager.log(LogManager.TAG_RECORD, "MediaProjection stopped by system")
+                    if (isRecording) {
+                        handleStop()
+                    }
+                }
+            }, Handler(Looper.getMainLooper()))
+            LogManager.log(LogManager.TAG_RECORD, "MediaProjection callback registered (Android 14+)")
+        }
+
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
@@ -271,6 +284,12 @@ class ScreenRecordService : Service() {
             setupMediaCodec(width, height)
             setupVirtualDisplay(width, height, metrics.densityDpi)
 
+            // Set isRecording BEFORE starting encode loops so the while-loop condition passes.
+            isRecording = true
+            isPaused = false
+            recordingStartTime = System.currentTimeMillis()
+            totalPausedDuration = 0L
+
             if (currentAudioMode == AudioMode.MIC_ONLY || currentAudioMode == AudioMode.MIXED) {
                 setupMicAudioRecord()
             }
@@ -282,11 +301,6 @@ class ScreenRecordService : Service() {
             setupAudioEncoder()
 
             startEncodeLoop()
-
-            isRecording = true
-            isPaused = false
-            recordingStartTime = System.currentTimeMillis()
-            totalPausedDuration = 0L
 
             startDurationTracking()
             RecordingStateManager.updateDuration(0L)
@@ -325,28 +339,33 @@ class ScreenRecordService : Service() {
     }
 
     private fun setupMediaMuxer() {
+        LogManager.log(LogManager.TAG_RECORD, "setupMediaMuxer: start, path=${outputFile?.absolutePath}")
         mediaMuxer = MediaMuxer(outputFile!!.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         videoTrackIndex = -1
         audioTrackIndex = -1
         muxerStarted = false
+        LogManager.log(LogManager.TAG_RECORD, "setupMediaMuxer: complete")
     }
 
     private fun setupMediaCodec(width: Int, height: Int) {
+        LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec: start, ${width}x$height, bitrate=${resolveBitrate()}, fps=${currentFrameRate.value}")
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, resolveBitrate())
             setInteger(MediaFormat.KEY_FRAME_RATE, currentFrameRate.value)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
-        LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec ${width}x$height bitrate=${format.getInteger(MediaFormat.KEY_BIT_RATE)} fps=${currentFrameRate.value}")
+        LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec: format created, bitrate=${format.getInteger(MediaFormat.KEY_BIT_RATE)}")
 
         mediaCodec = try {
+            LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec: trying hardware encoder")
             MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).apply {
                 configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 encoderInputSurface = createInputSurface()
                 start()
             }
         } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec: hardware encoder failed, trying fallback", e)
             try {
                 val fallbackCodecName = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
                     .firstOrNull {
@@ -354,15 +373,18 @@ class ScreenRecordService : Service() {
                     }
                     ?.name
                     ?: throw RuntimeException("No H.264 encoder available")
+                LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec: using fallback codec: $fallbackCodecName")
                 MediaCodec.createByCodecName(fallbackCodecName).apply {
                     configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                     encoderInputSurface = createInputSurface()
                     start()
                 }
             } catch (e2: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec: fallback encoder also failed", e2)
                 throw RuntimeException("Failed to create video encoder", e2)
             }
         }
+        LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec: complete, encoder=${mediaCodec?.name}")
     }
 
     private fun resolveBitrate(): Int {
@@ -374,22 +396,28 @@ class ScreenRecordService : Service() {
     }
 
     private fun setupVirtualDisplay(width: Int, height: Int, densityDpi: Int) {
+        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: start, ${width}x$height, density=$densityDpi, mode=${if (currentRecordMode == RecordMode.CUSTOM_REGION) "custom" else "full"}")
         recordWidth = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0) customWidth else width
         recordHeight = if (currentRecordMode == RecordMode.CUSTOM_REGION && customHeight > 0) customHeight else height
         recordDensityDpi = densityDpi
-        LogManager.log(LogManager.TAG_RECORD,
-            "setupVirtualDisplay ${recordWidth}x$recordHeight density=$recordDensityDpi mode=${if (currentRecordMode == RecordMode.CUSTOM_REGION) "custom" else "full"}")
+        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: final size=${recordWidth}x$recordHeight, density=$recordDensityDpi")
 
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenPulse",
-            recordWidth,
-            recordHeight,
-            recordDensityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            encoderInputSurface,
-            null,
-            null
-        )
+        virtualDisplay = try {
+            mediaProjection?.createVirtualDisplay(
+                "ScreenPulse",
+                recordWidth,
+                recordHeight,
+                recordDensityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                encoderInputSurface,
+                null,
+                null
+            )
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
+            throw e
+        }
+        LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: complete, display=${virtualDisplay?.display?.displayId}")
     }
 
     private fun recreateVirtualDisplay() {
@@ -407,10 +435,12 @@ class ScreenRecordService : Service() {
     }
 
     private fun setupMicAudioRecord() {
+        LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord: start")
         val sampleRate = 44100
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord: bufferSize=$bufferSize")
 
         micAudioRecord = AudioRecord.Builder()
             .setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
@@ -423,10 +453,15 @@ class ScreenRecordService : Service() {
             .build()
 
         micAudioRecord?.startRecording()
+        LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord: complete, recordingState=${micAudioRecord?.recordingState}")
     }
 
     private fun setupSystemAudioCapture() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: start, SDK=${Build.VERSION.SDK_INT}")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: skipped, SDK < Q")
+            return
+        }
 
         val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection!!)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
@@ -438,6 +473,7 @@ class ScreenRecordService : Service() {
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: bufferSize=$bufferSize")
 
         systemAudioRecord = AudioRecord.Builder()
             .setAudioPlaybackCaptureConfig(config)
@@ -450,9 +486,11 @@ class ScreenRecordService : Service() {
             .build()
 
         systemAudioRecord?.startRecording()
+        LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: complete, recordingState=${systemAudioRecord?.recordingState}")
     }
 
     private fun setupAudioEncoder() {
+        LogManager.log(LogManager.TAG_RECORD, "setupAudioEncoder: start")
         val audioFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 44100, 1).apply {
             setInteger(MediaFormat.KEY_BIT_RATE, 128000)
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
