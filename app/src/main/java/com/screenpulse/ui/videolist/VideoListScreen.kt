@@ -1,0 +1,284 @@
+package com.screenpulse.ui.videolist
+
+import android.content.Context
+import android.content.Intent
+import android.os.Environment
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class VideoItem(
+    val file: File,
+    val name: String,
+    val size: Long,
+    val lastModified: Long,
+    val duration: String
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VideoListScreen(
+    onBack: () -> Unit,
+    onVideoClick: (String) -> Unit,
+    onVideoTrim: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var videos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
+    var showDeleteDialog by remember { mutableStateOf<VideoItem?>(null) }
+    var showRenameDialog by remember { mutableStateOf<VideoItem?>(null) }
+
+    LaunchedEffect(Unit) {
+        videos = loadVideos(context)
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Videos") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            )
+        }
+    ) { paddingValues ->
+        if (videos.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.VideoLibrary,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        "No recordings yet",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 16.sp
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(videos) { video ->
+                    VideoCard(
+                        video = video,
+                        onClick = { onVideoClick(video.file.absolutePath) },
+                        onDelete = { showDeleteDialog = video },
+                        onRename = { showRenameDialog = video },
+                        onShare = { shareVideo(context, video.file) },
+                        onTrim = { onVideoTrim(video.file.absolutePath) }
+                    )
+                }
+            }
+        }
+
+        showDeleteDialog?.let { video ->
+            AlertDialog(
+                onDismissRequest = { showDeleteDialog = null },
+                title = { Text("Delete Video") },
+                text = { Text("Are you sure you want to delete \"${video.name}\"?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        video.file.delete()
+                        videos = loadVideos(context)
+                        showDeleteDialog = null
+                    }) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteDialog = null }) { Text("Cancel") }
+                }
+            )
+        }
+
+        showRenameDialog?.let { video ->
+            var newName by remember { mutableStateOf(video.name.replace(".mp4", "")) }
+            AlertDialog(
+                onDismissRequest = { showRenameDialog = null },
+                title = { Text("Rename") },
+                text = {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("File name") },
+                        singleLine = true
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val newFile = File(video.file.parent, "$newName.mp4")
+                        video.file.renameTo(newFile)
+                        videos = loadVideos(context)
+                        showRenameDialog = null
+                    }) { Text("Rename") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRenameDialog = null }) { Text("Cancel") }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun VideoCard(
+    video: VideoItem,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onRename: () -> Unit,
+    onShare: () -> Unit,
+    onTrim: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.PlayCircle,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = video.name,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row {
+                    Text(
+                        text = formatFileSize(video.size),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(" | ", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = video.duration,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    text = formatDate(video.lastModified),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row {
+                IconButton(onClick = onTrim) {
+                    Icon(Icons.Default.ContentCut, contentDescription = "Trim",
+                        tint = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = onShare) {
+                    Icon(Icons.Default.Share, contentDescription = "Share",
+                        tint = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = onRename) {
+                    Icon(Icons.Default.Edit, contentDescription = "Rename",
+                        tint = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete",
+                        tint = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+private fun loadVideos(context: Context): List<VideoItem> {
+    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
+    if (!dir.exists()) return emptyList()
+
+    return dir.listFiles { file -> file.extension == "mp4" }
+        ?.sortedByDescending { it.lastModified() }
+        ?.map { file ->
+            VideoItem(
+                file = file,
+                name = file.name,
+                size = file.length(),
+                lastModified = file.lastModified(),
+                duration = "00:00"
+            )
+        } ?: emptyList()
+}
+
+private fun formatFileSize(bytes: Long): String {
+    return when {
+        bytes >= 1073741824 -> String.format("%.1f GB", bytes / 1073741824.0)
+        bytes >= 1048576 -> String.format("%.1f MB", bytes / 1048576.0)
+        bytes >= 1024 -> String.format("%.1f KB", bytes / 1024.0)
+        else -> "$bytes B"
+    }
+}
+
+private fun formatDate(timestamp: Long): String {
+    return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+}
+
+private fun shareVideo(context: Context, file: File) {
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file
+    )
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "video/mp4"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(shareIntent, "Share Video"))
+}

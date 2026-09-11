@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floating_root"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical">
+
+    <LinearLayout
+        android:id="@+id/floating_container"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@drawable/floating_btn_bg">
+
+        <ImageView
+            android:id="@+id/floating_icon"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_record"
+            android:contentDescription="@string/start_recording" />
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/floating_screenshot_btn"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="4dp"
+        android:src="@drawable/ic_screenshot"
+        android:background="@drawable/floating_small_btn_bg"
+        android:padding="6dp"
+        android:contentDescription="@string/screenshot"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/floating_annotation_btn"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="4dp"
+        android:src="@drawable/ic_pen"
+        android:background="@drawable/floating_small_btn_bg"
+        android:padding="6dp"
+        android:contentDescription="@string/screen_annotation"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/floating_stop_btn"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="4dp"
+        android:src="@drawable/ic_stop"
+        android:background="@drawable/floating_small_btn_bg"
+        android:padding="6dp"
+        android:contentDescription="@string/stop_recording"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/floating_hide_btn"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="4dp"
+        android:src="@drawable/ic_hide"
+        android:background="@drawable/floating_small_btn_bg"
+        android:padding="6dp"
+        android:contentDescription="@string/hide_floating_window"
+        android:visibility="gone" />
+</LinearLayout>

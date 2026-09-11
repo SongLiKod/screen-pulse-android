@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_green">#FF2E7D32</color>
+    <color name="accent_green">#FF4CAF50</color>
+    <color name="light_green_bg">#FFE8F5E9</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+    <color name="text_primary_light">#FF212121</color>
+    <color name="text_secondary_light">#FF757575</color>
+    <color name="surface_light">#FFFFFFFF</color>
+    <color name="background_light">#FFFAFAFA</color>
+    <color name="card_light">#FFE8F5E9</color>
+    <color name="error_red">#FFD32F2F</color>
+
+    <color name="brand_green_dark">#FF388E3C</color>
+    <color name="accent_green_dark">#FF43A047</color>
+    <color name="dark_green_bg">#FF1B3A1B</color>
+    <color name="text_primary_dark">#FFE0E0E0</color>
+    <color name="text_secondary_dark">#FFBDBDBD</color>
+    <color name="surface_dark">#FF1E1E1E</color>
+    <color name="background_dark">#FF121212</color>
+    <color name="card_dark">#FF1B3A1B</color>
+    <color name="error_red_dark">#FFEF5350</color>
+
+    <color name="floating_small_btn_light">#CC2E7D32</color>
+    <color name="floating_small_btn_dark">#CC388E3C</color>
+
+    <color name="annotation_toolbar_bg_light">#CCFFFFFF</color>
+    <color name="annotation_toolbar_bg_dark">#CC1E1E1E</color>
+    <color name="annotation_pen_color">#FF2E7D32</color>
+    <color name="pip_border_color">#FF2E7D32</color>
+</resources>

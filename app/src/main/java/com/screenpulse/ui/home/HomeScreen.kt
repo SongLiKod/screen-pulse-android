@@ -1,0 +1,519 @@
+package com.screenpulse.ui.home
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.screenpulse.floatingwindow.FloatingWindowService
+import com.screenpulse.permission.PermissionManager
+import com.screenpulse.repository.AudioMode
+import com.screenpulse.repository.CountdownMode
+import com.screenpulse.repository.RecordMode
+import com.screenpulse.service.ScreenRecordService
+import com.screenpulse.viewmodel.RecordingState
+import com.screenpulse.viewmodel.RecordingViewModel
+import com.screenpulse.viewmodel.SettingsViewModel
+import java.util.concurrent.TimeUnit
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreen(
+    recordingViewModel: RecordingViewModel,
+    settingsViewModel: SettingsViewModel,
+    onNavigateToSettings: () -> Unit,
+    onNavigateToVideoList: () -> Unit
+) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val recordingState by recordingViewModel.recordingState.collectAsState()
+    val duration by recordingViewModel.recordingDuration.collectAsState()
+    val countdown by recordingViewModel.countdownRemaining.collectAsState()
+    val audioMode by settingsViewModel.audioMode.collectAsState()
+    val recordMode by settingsViewModel.recordMode.collectAsState()
+    val countdownMode by settingsViewModel.countdownMode.collectAsState()
+    val resolution by settingsViewModel.resolution.collectAsState()
+    val frameRate by settingsViewModel.frameRate.collectAsState()
+    val bitrate by settingsViewModel.bitrate.collectAsState()
+    val compressionMode by settingsViewModel.compressionMode.collectAsState()
+    val systemVolume by settingsViewModel.systemVolume.collectAsState()
+    val micVolume by settingsViewModel.micVolume.collectAsState()
+    val watermarkEnabled by settingsViewModel.watermarkEnabled.collectAsState()
+    val watermarkText by settingsViewModel.watermarkText.collectAsState()
+    val pipEnabled by settingsViewModel.pipEnabled.collectAsState()
+    val pipSize by settingsViewModel.pipSize.collectAsState()
+    val bitrateMode by settingsViewModel.bitrateMode.collectAsState()
+    val customResolutionWidth by settingsViewModel.customResolutionWidth.collectAsState()
+    val customResolutionHeight by settingsViewModel.customResolutionHeight.collectAsState()
+
+    var showPermissionDialog by remember { mutableStateOf(false) }
+    var showOverlayDialog by remember { mutableStateOf(false) }
+
+    val mediaProjectionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            startRecording(
+                context = context,
+                resultCode = result.resultCode,
+                resultData = result.data!!,
+                audioMode = audioMode,
+                recordMode = recordMode,
+                countdownMode = countdownMode,
+                resolution = resolution,
+                frameRate = frameRate,
+                bitrate = bitrate,
+                bitrateMode = bitrateMode,
+                compressionMode = compressionMode,
+                systemVolume = systemVolume,
+                micVolume = micVolume,
+                watermarkEnabled = watermarkEnabled,
+                watermarkText = watermarkText,
+                customResolutionWidth = customResolutionWidth,
+                customResolutionHeight = customResolutionHeight,
+                settingsViewModel = settingsViewModel
+            )
+            startFloatingWindow(context)
+            if (pipEnabled) {
+                startPipOverlay(context, pipSize)
+            }
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        if (allGranted) {
+            if (!PermissionManager.hasOverlayPermission(context)) {
+                showOverlayDialog = true
+            } else {
+                mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+            }
+        } else {
+            showPermissionDialog = true
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("ScreenPulse", fontWeight = FontWeight.Bold) },
+                actions = {
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(24.dp))
+
+            RecordButton(
+                state = recordingState,
+                duration = duration,
+                countdown = countdown,
+                onClick = {
+                    val permissions = PermissionManager.getRequiredPermissions()
+                    val needsPermission = permissions.any { perm ->
+                        androidx.core.content.ContextCompat.checkSelfPermission(
+                            context, perm
+                        ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    }
+                    if (needsPermission) {
+                        permissionLauncher.launch(permissions)
+                    } else if (!PermissionManager.hasOverlayPermission(context)) {
+                        showOverlayDialog = true
+                    } else {
+                        mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+                    }
+                },
+                onStop = {
+                    context.startService(Intent(context, ScreenRecordService::class.java).apply {
+                        action = ScreenRecordService.ACTION_STOP
+                    })
+                }
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            StatusCard(recordingState = recordingState, duration = duration)
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            CurrentParamsCard(
+                resolution = resolution.value,
+                frameRate = "${frameRate.value} FPS",
+                audioMode = when (audioMode) {
+                    AudioMode.SYSTEM_ONLY -> "System Only"
+                    AudioMode.MIC_ONLY -> "Mic Only"
+                    AudioMode.MIXED -> "System + Mic"
+                },
+                recordMode = if (recordMode == RecordMode.FULL_SCREEN) "Full Screen" else "Custom Region"
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                ActionButton(
+                    icon = Icons.Default.VideoLibrary,
+                    label = "Videos",
+                    onClick = onNavigateToVideoList
+                )
+                ActionButton(
+                    icon = Icons.Default.Settings,
+                    label = "Settings",
+                    onClick = onNavigateToSettings
+                )
+                ActionButton(
+                    icon = if (recordingState == RecordingState.PAUSED) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    label = if (recordingState == RecordingState.PAUSED) "Resume" else "Pause",
+                    onClick = {
+                        val action = if (recordingState == RecordingState.RECORDING) {
+                            ScreenRecordService.ACTION_PAUSE
+                        } else {
+                            ScreenRecordService.ACTION_RESUME
+                        }
+                        context.startService(Intent(context, ScreenRecordService::class.java).apply {
+                            this.action = action
+                        })
+                    },
+                    enabled = recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED
+                )
+            }
+
+            if (showPermissionDialog) {
+                AlertDialog(
+                    onDismissRequest = { showPermissionDialog = false },
+                    title = { Text("Permission Required") },
+                    text = { Text("Screen recording and microphone permissions are required for recording.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showPermissionDialog = false
+                            permissionLauncher.launch(PermissionManager.getRequiredPermissions())
+                        }) { Text("Grant") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showPermissionDialog = false }) { Text("Cancel") }
+                    }
+                )
+            }
+
+            if (showOverlayDialog) {
+                AlertDialog(
+                    onDismissRequest = { showOverlayDialog = false },
+                    title = { Text("Overlay Permission") },
+                    text = { Text("Overlay permission is required for the floating window control.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showOverlayDialog = false
+                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:${context.packageName}"))
+                            context.startActivity(intent)
+                        }) { Text("Grant") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showOverlayDialog = false }) { Text("Cancel") }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordButton(
+    state: RecordingState,
+    duration: Long,
+    countdown: Int,
+    onClick: () -> Unit,
+    onStop: () -> Unit
+) {
+    val isRecording = state == RecordingState.RECORDING || state == RecordingState.PAUSED
+    val isCountdown = state == RecordingState.COUNTDOWN
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clip(CircleShape)
+                .background(
+                    when {
+                        isCountdown -> MaterialTheme.colorScheme.secondary
+                        isRecording -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+                .clickable(enabled = !isCountdown) {
+                    if (isRecording) onStop() else onClick()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            when {
+                isCountdown -> Text(
+                    "$countdown",
+                    fontSize = 48.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSecondary
+                )
+                isRecording -> Icon(
+                    Icons.Default.Stop,
+                    contentDescription = "Stop",
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.onError
+                )
+                else -> Icon(
+                    Icons.Default.FiberManualRecord,
+                    contentDescription = "Start Recording",
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = when {
+                isCountdown -> "Starting..."
+                isRecording -> formatDuration(duration)
+                else -> "Tap to Record"
+            },
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+    }
+}
+
+@Composable
+private fun StatusCard(state: RecordingState, duration: Long) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    when (state) {
+                        RecordingState.IDLE -> Icons.Default.Circle
+                        RecordingState.COUNTDOWN -> Icons.Default.Timer
+                        RecordingState.RECORDING -> Icons.Default.FiberManualRecord
+                        RecordingState.PAUSED -> Icons.Default.Pause
+                    },
+                    contentDescription = null,
+                    tint = when (state) {
+                        RecordingState.RECORDING -> MaterialTheme.colorScheme.error
+                        RecordingState.PAUSED -> MaterialTheme.colorScheme.secondary
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = when (state) {
+                        RecordingState.IDLE -> "Ready"
+                        RecordingState.COUNTDOWN -> "Countdown"
+                        RecordingState.RECORDING -> "Recording"
+                        RecordingState.PAUSED -> "Paused"
+                    },
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            if (state == RecordingState.RECORDING || state == RecordingState.PAUSED) {
+                Text(
+                    text = formatDuration(duration),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentParamsCard(
+    resolution: String,
+    frameRate: String,
+    audioMode: String,
+    recordMode: String
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Current Settings", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            ParamRow("Resolution", resolution)
+            ParamRow("Frame Rate", frameRate)
+            ParamRow("Audio", audioMode)
+            ParamRow("Mode", recordMode)
+        }
+    }
+}
+
+@Composable
+private fun ParamRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+        Text(value, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun ActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(enabled = enabled) { onClick() }
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(
+                    if (enabled) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant
+                )
+                .padding(12.dp),
+            tint = if (enabled) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            label,
+            fontSize = 12.sp,
+            color = if (enabled) MaterialTheme.colorScheme.onBackground
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val hours = TimeUnit.MILLISECONDS.toHours(durationMs)
+    val minutes = TimeUnit.MILLISECONDS.toMinutes(durationMs) % 60
+    val seconds = TimeUnit.MILLISECONDS.toSeconds(durationMs) % 60
+    return if (hours > 0) {
+        String.format("%02d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%02d:%02d", minutes, seconds)
+    }
+}
+
+private fun startRecording(
+    context: Context,
+    resultCode: Int,
+    resultData: Intent,
+    audioMode: AudioMode,
+    recordMode: RecordMode,
+    countdownMode: CountdownMode,
+    resolution: com.screenpulse.repository.Resolution,
+    frameRate: com.screenpulse.repository.FrameRate,
+    bitrate: Int,
+    bitrateMode: com.screenpulse.repository.BitrateMode,
+    compressionMode: com.screenpulse.repository.CompressionMode,
+    systemVolume: Int,
+    micVolume: Int,
+    watermarkEnabled: Boolean,
+    watermarkText: String,
+    customResolutionWidth: Int,
+    customResolutionHeight: Int,
+    settingsViewModel: SettingsViewModel
+) {
+    val effectiveBitrate = if (bitrateMode == com.screenpulse.repository.BitrateMode.SMART) {
+        0
+    } else {
+        bitrate
+    }
+    val intent = Intent(context, ScreenRecordService::class.java).apply {
+        action = ScreenRecordService.ACTION_START
+        putExtra(ScreenRecordService.EXTRA_RESULT_CODE, resultCode)
+        putExtra(ScreenRecordService.EXTRA_RESULT_DATA, resultData)
+        putExtra(ScreenRecordService.EXTRA_AUDIO_MODE, audioMode.value)
+        putExtra(ScreenRecordService.EXTRA_RECORD_MODE, recordMode.value)
+        putExtra(ScreenRecordService.EXTRA_COUNTDOWN, countdownMode.value)
+        putExtra(ScreenRecordService.EXTRA_RESOLUTION, resolution.value)
+        putExtra(ScreenRecordService.EXTRA_FRAME_RATE, frameRate.value)
+        putExtra(ScreenRecordService.EXTRA_BITRATE, effectiveBitrate)
+        putExtra(ScreenRecordService.EXTRA_COMPRESSION_MODE, compressionMode.value)
+        putExtra(ScreenRecordService.EXTRA_SYSTEM_VOLUME, systemVolume)
+        putExtra(ScreenRecordService.EXTRA_MIC_VOLUME, micVolume)
+        putExtra(ScreenRecordService.EXTRA_WATERMARK_ENABLED, watermarkEnabled)
+        putExtra(ScreenRecordService.EXTRA_WATERMARK_TEXT, watermarkText)
+        putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_WIDTH, customResolutionWidth)
+        putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_HEIGHT, customResolutionHeight)
+    }
+    context.startService(intent)
+}
+
+private fun startFloatingWindow(context: Context) {
+    val intent = Intent(context, FloatingWindowService::class.java)
+    context.startService(intent)
+}
+
+private fun startPipOverlay(context: Context, size: Int) {
+    val intent = Intent(context, com.screenpulse.floatingwindow.FloatingPipService::class.java).apply {
+        action = com.screenpulse.floatingwindow.FloatingPipService.ACTION_SHOW
+        putExtra(com.screenpulse.floatingwindow.FloatingPipService.EXTRA_SIZE, size)
+    }
+    context.startService(intent)
+}
