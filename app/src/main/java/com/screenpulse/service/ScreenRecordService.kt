@@ -216,7 +216,7 @@ class ScreenRecordService : Service() {
     }
 
     private fun startRecordingInternal(resultCode: Int, resultData: Intent?) {
-        if (resultCode < 0 || resultData == null) {
+        if (resultData == null) {
             RecordingStateManager.updateState(RecordingState.IDLE)
             return
         }
