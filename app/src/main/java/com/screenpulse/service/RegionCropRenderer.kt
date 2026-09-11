@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.SurfaceTexture
 import android.opengl.EGL14
+import android.opengl.EGLExt
 import android.opengl.GLES20
 import android.opengl.GLUtils
 import android.view.Surface
@@ -328,7 +329,7 @@ class RegionCropRenderer {
 
             // Set presentation time and swap
             val timestampNs = surfaceTexture?.timestamp ?: 0L
-            EGL14.eglPresentationTimeANDROID(eglDisplay, eglSurface, timestampNs)
+            EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, timestampNs)
             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
 
             return true
