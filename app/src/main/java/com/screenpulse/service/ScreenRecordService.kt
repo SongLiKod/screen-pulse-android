@@ -84,6 +84,7 @@ class ScreenRecordService : Service() {
         const val EXTRA_WATERMARK_TYPE = "watermark_type"
         const val EXTRA_WATERMARK_IMAGE_URI = "watermark_image_uri"
         const val EXTRA_PIP_ENABLED = "pip_enabled"
+        const val EXTRA_CUSTOM_SAVE_TREE_URI = "custom_save_tree_uri"
         const val EXTRA_CUSTOM_RESOLUTION_WIDTH = "custom_resolution_width"
         const val EXTRA_CUSTOM_RESOLUTION_HEIGHT = "custom_resolution_height"
         const val CHANNEL_ID = "screen_pulse_recording"
@@ -137,6 +138,7 @@ class ScreenRecordService : Service() {
     private var recordWidth = 0
     private var recordHeight = 0
     private var recordDensityDpi = 0
+    private var customSaveTreeUri = ""
 
     private var stateCallback: RecordingStateCallback? = null
 
@@ -191,6 +193,7 @@ class ScreenRecordService : Service() {
         pipEnabled = intent.getBooleanExtra(EXTRA_PIP_ENABLED, false)
         customResolutionWidth = intent.getIntExtra(EXTRA_CUSTOM_RESOLUTION_WIDTH, 1920)
         customResolutionHeight = intent.getIntExtra(EXTRA_CUSTOM_RESOLUTION_HEIGHT, 1080)
+        customSaveTreeUri = intent.getStringExtra(EXTRA_CUSTOM_SAVE_TREE_URI) ?: ""
 
         val countdown = CountdownMode.fromValue(intent.getIntExtra(EXTRA_COUNTDOWN, 0))
         if (countdown != CountdownMode.NONE) {
@@ -253,12 +256,12 @@ class ScreenRecordService : Service() {
             height = currentResolution.height
         }
 
-        outputFile = generateOutputFile()
+        outputFile = createOutputFile()
         LogManager.log(LogManager.TAG_RECORD,
             "start recording: res=${currentResolution.value} ${width}x$height fps=${currentFrameRate.value} " +
             "bitrate=${
                 if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
-            } audioMode=${currentAudioMode} recordMode=${currentRecordMode} out=${outputFile?.name}")
+            } audioMode=${currentAudioMode} recordMode=${currentRecordMode} out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
 
         try {
             NativeBridge.nativeInit()
@@ -529,16 +532,21 @@ class ScreenRecordService : Service() {
                     }
 
                     if (bufferInfo.size > 0) {
-                        if (audioTrackIndex == -1) {
+                        if (audioTrackIndex == -1 && !muxerStarted) {
                             val format = codec.outputFormat
-                            audioTrackIndex = muxer.addTrack(format)
-                            if (videoTrackIndex != -1 && !muxerStarted) {
+                            audioTrackIndex = try {
+                                muxer.addTrack(format)
+                            } catch (e: Exception) {
+                                LogManager.log(LogManager.TAG_RECORD, "addTrack failed, using video-only", e)
+                                -2
+                            }
+                            if (videoTrackIndex != -1 && !muxerStarted && audioTrackIndex != -2) {
                                 muxer.start()
                                 muxerStarted = true
                             }
                         }
 
-                        if (muxerStarted && audioTrackIndex != -1) {
+                        if (muxerStarted && audioTrackIndex != -1 && audioTrackIndex != -2) {
                             outputBuffer.position(bufferInfo.offset)
                             outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
                             muxer.writeSampleData(audioTrackIndex, outputBuffer, bufferInfo)
@@ -609,9 +617,15 @@ class ScreenRecordService : Service() {
     }
 
     private fun tryStartMer(muxer: MediaMuxer) {
-        if (!muxerStarted && videoTrackIndex != -1 && audioTrackIndex != -1) {
-            muxer.start()
-            muxerStarted = true
+        if (!muxerStarted && videoTrackIndex != -1) {
+            if (audioTrackIndex != -1 && audioTrackIndex != -2) {
+                muxer.start()
+                muxerStarted = true
+            } else if (recordingStartTime > 0 && System.currentTimeMillis() - recordingStartTime > 3000) {
+                LogManager.log(LogManager.TAG_RECORD, "Audio track not ready in time, starting muxer video-only")
+                muxer.start()
+                muxerStarted = true
+            }
         }
     }
 
@@ -654,12 +668,19 @@ class ScreenRecordService : Service() {
         encodeJob?.cancel()
         audioEncodeJob?.cancel()
 
-        mediaCodec?.signalEndOfInputStream()
+        try {
+            mediaCodec?.signalEndOfInputStream()
+        } catch (_: Exception) {}
         try {
             drainVideoEncoder()
         } catch (_: Exception) {}
+        try {
+            drainAudioEncoder()
+        } catch (_: Exception) {}
 
         cleanup()
+
+        finalizeOutput()
 
         val savedFile = outputFile
         RecordingStateManager.updateDuration(0L)
@@ -667,9 +688,9 @@ class ScreenRecordService : Service() {
         syncFloatingWindow(RecordingState.IDLE)
         stateCallback?.onStateChanged(RecordingState.IDLE)
         stateCallback?.onRecordingComplete(savedFile?.absolutePath)
-        LogManager.log(LogManager.TAG_RECORD, "Recording stopped. saved=${savedFile?.exists() == true} size=${savedFile?.length()?.let { it / 1024 } ?: 0}KB path=${savedFile?.path}")
+        LogManager.log(LogManager.TAG_RECORD, "Recording stopped. saved=${savedFile != null && savedFile.exists()} size=${savedFile?.length()?.let { it / 1024 } ?: 0}KB path=${savedFile?.path}")
 
-        if (savedFile != null && savedFile.exists()) {
+        if (customSaveTreeUri.isEmpty() && savedFile != null && savedFile.exists()) {
             triggerCompression(savedFile.absolutePath)
         }
 
@@ -829,11 +850,49 @@ class ScreenRecordService : Service() {
         }
     }
 
-    private fun generateOutputFile(): File {
+    private fun createOutputFile(): File {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val dir = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
-        if (!dir.exists()) dir.mkdirs()
-        return File(dir, "ScreenPulse_$timestamp.mp4")
+        return if (customSaveTreeUri.isNotEmpty()) {
+            File(cacheDir, "ScreenPulse_$timestamp.mp4")
+        } else {
+            val dir = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
+            if (!dir.exists()) dir.mkdirs()
+            File(dir, "ScreenPulse_$timestamp.mp4")
+        }
+    }
+
+    private fun finalizeOutput() {
+        val file = outputFile ?: return
+        if (customSaveTreeUri.isEmpty()) return
+
+        try {
+            val treeUri = android.net.Uri.parse(customSaveTreeUri)
+            val parent = androidx.documentfile.provider.DocumentFile.fromTreeUri(this, treeUri)
+            if (parent == null || !file.exists() || file.length() == 0L) {
+                LogManager.log(LogManager.TAG_RECORD, "finalizeOutput skipped: tree null or file empty")
+                file.delete()
+                outputFile = null
+                return
+            }
+
+            val baseName = file.nameWithoutExtension
+            val target = parent.createFile("video/mp4", baseName)
+            if (target == null) {
+                LogManager.log(LogManager.TAG_RECORD, "finalizeOutput: createFile failed")
+                file.delete()
+                outputFile = null
+                return
+            }
+
+            contentResolver.openOutputStream(target.uri)?.use { out ->
+                file.inputStream().use { it.copyTo(out) }
+            }
+            LogManager.log(LogManager.TAG_RECORD, "Saved to custom dir: ${target.uri}")
+            file.delete()
+            outputFile = null
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "finalizeOutput error", e)
+        }
     }
 
     private fun syncFloatingWindow(state: RecordingState) {

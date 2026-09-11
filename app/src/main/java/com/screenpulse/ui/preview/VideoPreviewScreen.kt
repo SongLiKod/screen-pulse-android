@@ -2,6 +2,7 @@ package com.screenpulse.ui.preview
 
 import android.widget.VideoView
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,13 +25,19 @@ fun VideoPreviewScreen(
     filePath: String,
     onBack: () -> Unit
 ) {
-    val file = File(filePath)
+    val isContentUri = filePath.startsWith("content://")
+    val file = if (isContentUri) null else File(filePath)
+    val uri = if (isContentUri) Uri.parse(filePath) else null
+    val displayName = if (file != null) file.name else (filePath.substringAfterLast('/').ifEmpty { "video.mp4" })
+    val displayPath = if (file != null) file.absolutePath else filePath
+    val exists = file != null && file.exists()
+    val length = file?.length() ?: -1L
     var isPlaying by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(file.name, maxLines = 1) },
+                title = { Text(displayName, maxLines = 1) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
@@ -49,23 +56,46 @@ fun VideoPreviewScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            AndroidView(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f),
-                factory = { context ->
-                    VideoView(context).apply {
-                        setVideoURI(Uri.fromFile(file))
-                        setOnPreparedListener { mp ->
-                            mp.start()
-                            isPlaying = true
-                        }
-                        setOnCompletionListener {
-                            isPlaying = false
+            val playable = isContentUri || (exists && length > 0)
+            if (playable) {
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f),
+                    factory = { context ->
+                        VideoView(context).apply {
+                            setOnErrorListener { _, _, _ ->
+                                true
+                            }
+                            setOnPreparedListener { mp ->
+                                mp.start()
+                                isPlaying = true
+                            }
+                            setOnCompletionListener {
+                                isPlaying = false
+                            }
+                            if (isContentUri) {
+                                setVideoURI(uri)
+                            } else {
+                                setVideoURI(Uri.fromFile(file))
+                            }
                         }
                     }
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (file.exists()) "文件无效或为空" else "文件不存在",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-            )
+            }
 
             Card(
                 modifier = Modifier
@@ -79,9 +109,9 @@ fun VideoPreviewScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(stringResource(R.string.file_info), fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(modifier = Modifier.height(8.dp))
-                    InfoRow(stringResource(R.string.info_name), file.name)
-                    InfoRow(stringResource(R.string.info_size), formatFileSize(file.length()))
-                    InfoRow(stringResource(R.string.info_path), file.absolutePath)
+                    InfoRow(stringResource(R.string.info_name), displayName)
+                    InfoRow(stringResource(R.string.info_size), if (length < 0) "—" else formatFileSize(length))
+                    InfoRow(stringResource(R.string.info_path), displayPath)
                 }
             }
         }

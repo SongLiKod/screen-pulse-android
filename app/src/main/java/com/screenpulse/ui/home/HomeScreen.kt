@@ -72,6 +72,7 @@ fun HomeScreen(
     val bitrateMode by settingsViewModel.bitrateMode.collectAsState()
     val customResolutionWidth by settingsViewModel.customResolutionWidth.collectAsState()
     val customResolutionHeight by settingsViewModel.customResolutionHeight.collectAsState()
+    val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
 
     LaunchedEffect(Unit) {
         while (isActive) {
@@ -108,6 +109,7 @@ fun HomeScreen(
                 watermarkText = watermarkText,
                 customResolutionWidth = customResolutionWidth,
                 customResolutionHeight = customResolutionHeight,
+                customSaveTreeUri = customSaveTreeUri,
                 settingsViewModel = settingsViewModel
             )
             startFloatingWindow(context)
@@ -511,6 +513,7 @@ private fun startRecording(
     watermarkText: String,
     customResolutionWidth: Int,
     customResolutionHeight: Int,
+    customSaveTreeUri: String,
     settingsViewModel: SettingsViewModel
 ) {
     val effectiveBitrate = if (bitrateMode == com.screenpulse.repository.BitrateMode.SMART) {
@@ -535,6 +538,7 @@ private fun startRecording(
         putExtra(ScreenRecordService.EXTRA_WATERMARK_TEXT, watermarkText)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_WIDTH, customResolutionWidth)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_HEIGHT, customResolutionHeight)
+        putExtra(ScreenRecordService.EXTRA_CUSTOM_SAVE_TREE_URI, customSaveTreeUri)
     }
     context.startService(intent)
 }

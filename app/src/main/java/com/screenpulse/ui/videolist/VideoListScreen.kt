@@ -2,6 +2,7 @@ package com.screenpulse.ui.videolist
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Environment
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -23,17 +24,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.screenpulse.R
+import com.screenpulse.util.LogManager
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 data class VideoItem(
-    val file: File,
+    val file: File? = null,
+    val uri: Uri? = null,
     val name: String,
     val size: Long,
     val lastModified: Long,
-    val duration: String
+    val duration: String,
+    val displayPath: String
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -103,11 +107,11 @@ fun VideoListScreen(
                 items(videos) { video ->
                     VideoCard(
                         video = video,
-                        onClick = { onVideoClick(video.file.absolutePath) },
+                        onClick = { onVideoClick(video.displayPath) },
                         onDelete = { showDeleteDialog = video },
                         onRename = { showRenameDialog = video },
-                        onShare = { shareVideo(context, video.file) },
-                        onTrim = { onVideoTrim(video.file.absolutePath) }
+                        onShare = { shareVideo(context, video) },
+                        onTrim = { onVideoTrim(video.displayPath) }
                     )
                 }
             }
@@ -120,7 +124,7 @@ fun VideoListScreen(
                 text = { Text(stringResource(R.string.delete_confirm, video.name)) },
                 confirmButton = {
                     TextButton(onClick = {
-                        video.file.delete()
+                        deleteVideo(context, video)
                         videos = loadVideos(context)
                         showDeleteDialog = null
                     }) {
@@ -148,8 +152,7 @@ fun VideoListScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        val newFile = File(video.file.parent, "$newName.mp4")
-                        video.file.renameTo(newFile)
+                        renameVideo(context, video, newName)
                         videos = loadVideos(context)
                         showRenameDialog = null
                     }) { Text(stringResource(R.string.rename)) }
@@ -243,20 +246,82 @@ private fun VideoCard(
 }
 
 private fun loadVideos(context: Context): List<VideoItem> {
-    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
-    if (!dir.exists()) return emptyList()
+    val items = mutableListOf<VideoItem>()
 
-    return dir.listFiles { file -> file.extension == "mp4" }
-        ?.sortedByDescending { it.lastModified() }
-        ?.map { file ->
-            VideoItem(
-                file = file,
-                name = file.name,
-                size = file.length(),
-                lastModified = file.lastModified(),
-                duration = "00:00"
+    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
+    if (dir.exists()) {
+        dir.listFiles { file -> file.extension == "mp4" }?.forEach { file ->
+            items.add(
+                VideoItem(
+                    file = file,
+                    name = file.name,
+                    size = file.length(),
+                    lastModified = file.lastModified(),
+                    duration = "00:00",
+                    displayPath = file.absolutePath
+                )
             )
-        } ?: emptyList()
+        }
+    }
+
+    val customUri = loadCustomSaveTreeUri(context)
+    if (customUri != null) {
+        try {
+            val treeDir = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, customUri)
+            if (treeDir != null && treeDir.isDirectory) {
+                treeDir.listFiles()
+                    ?.filter { it.isFile && it.name?.endsWith(".mp4") == true }
+                    ?.forEach { doc ->
+                        items.add(
+                            VideoItem(
+                                uri = doc.uri,
+                                name = doc.name ?: "video.mp4",
+                                size = doc.length(),
+                                lastModified = doc.lastModified(),
+                                duration = "00:00",
+                                displayPath = doc.uri.toString()
+                            )
+                        )
+                    }
+            }
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_UI, "loadVideos custom dir error: ${e.message}")
+        }
+    }
+
+    return items.sortedByDescending { it.lastModified }
+}
+
+private fun loadCustomSaveTreeUri(context: Context): Uri? {
+    val prefs = context.getSharedPreferences("screen_pulse_save_path", Context.MODE_PRIVATE)
+    val s = prefs.getString("custom_save_tree_uri", null) ?: return null
+    return if (s.isEmpty()) null else Uri.parse(s)
+}
+
+private fun deleteVideo(context: Context, video: VideoItem) {
+    video.file?.delete()
+    video.uri?.let {
+        try {
+            androidx.documentfile.provider.DocumentFile.fromSingleUri(context, it)?.delete()
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_UI, "delete custom video error: ${e.message}")
+        }
+    }
+}
+
+private fun renameVideo(context: Context, video: VideoItem, newName: String) {
+    val fileName = if (newName.endsWith(".mp4")) newName else "$newName.mp4"
+    if (video.file != null) {
+        val newFile = File(video.file.parent, fileName)
+        video.file.renameTo(newFile)
+    }
+    video.uri?.let {
+        try {
+            androidx.documentfile.provider.DocumentFile.fromSingleUri(context, it)?.renameTo(fileName)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_UI, "rename custom video error: ${e.message}")
+        }
+    }
 }
 
 private fun formatFileSize(bytes: Long): String {
@@ -272,12 +337,10 @@ private fun formatDate(timestamp: Long): String {
     return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
 }
 
-private fun shareVideo(context: Context, file: File) {
-    val uri = FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.fileprovider",
-        file
-    )
+private fun shareVideo(context: Context, video: VideoItem) {
+    val uri = video.uri ?: video.file?.let {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", it)
+    } ?: return
     val shareIntent = Intent(Intent.ACTION_SEND).apply {
         type = "video/mp4"
         putExtra(Intent.EXTRA_STREAM, uri)

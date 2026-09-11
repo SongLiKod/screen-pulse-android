@@ -1,7 +1,9 @@
 package com.screenpulse.viewmodel
 
 import android.app.Application
+import android.content.Intent
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.net.toUri
 import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -80,6 +82,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val language: StateFlow<Language> = repository.language
         .stateIn(viewModelScope, SharingStarted.Eagerly, Language.SYSTEM)
 
+    val customSaveTreeUri: StateFlow<String> = repository.customSaveTreeUri
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { repository.setThemeMode(mode) }
     fun setAudioMode(mode: AudioMode) = viewModelScope.launch { repository.setAudioMode(mode) }
     fun setResolution(res: Resolution) = viewModelScope.launch { repository.setResolution(res) }
@@ -110,6 +115,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setLanguage(language: Language) = viewModelScope.launch {
         repository.setLanguage(language)
         applyLanguage(language)
+    }
+
+    fun setCustomSaveTreeUri(uri: String) = viewModelScope.launch {
+        repository.setCustomSaveTreeUri(uri)
+        val app = getApplication<Application>()
+        val prefs = app.getSharedPreferences("screen_pulse_save_path", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("custom_save_tree_uri", uri).apply()
+        if (uri.isNotEmpty() && app.contentResolver?.takePersistableUriPermission != null) {
+            val resolver = app.contentResolver
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching { resolver.takePersistableUriPermission(uri.toUri(), flags) }
+        }
     }
 
     private fun applyLanguage(language: Language) {

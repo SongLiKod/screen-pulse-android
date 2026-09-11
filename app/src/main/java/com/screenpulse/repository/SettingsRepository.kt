@@ -42,6 +42,15 @@ class SettingsRepository(private val context: Context) {
         val CUSTOM_RESOLUTION_HEIGHT = intPreferencesKey("custom_resolution_height")
         val BITRATE_MODE = intPreferencesKey("bitrate_mode")
         val LANGUAGE = stringPreferencesKey("language")
+        val CUSTOM_SAVE_TREE_URI = stringPreferencesKey("custom_save_tree_uri")
+    }
+
+    val customSaveTreeUri: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.CUSTOM_SAVE_TREE_URI] ?: ""
+    }
+
+    suspend fun setCustomSaveTreeUri(uri: String) {
+        context.dataStore.edit { it[Keys.CUSTOM_SAVE_TREE_URI] = uri }
     }
 
     val themeMode: Flow<ThemeMode> = context.dataStore.data.map { prefs ->

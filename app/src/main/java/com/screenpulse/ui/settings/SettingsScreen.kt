@@ -27,8 +27,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.screenpulse.R
 import com.screenpulse.repository.*
+import com.screenpulse.util.LogManager
 import com.screenpulse.viewmodel.SettingsViewModel
 import com.screenpulse.ui.regionselect.RegionSelectActivity
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +62,7 @@ fun SettingsScreen(
     val customResolutionHeight by settingsViewModel.customResolutionHeight.collectAsState()
     val bitrateMode by settingsViewModel.bitrateMode.collectAsState()
     val language by settingsViewModel.language.collectAsState()
+    val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
 
     var showBatteryDialog by remember { mutableStateOf(false) }
     var customWidthText by remember(customResolutionWidth) { mutableStateOf(customResolutionWidth.toString()) }
@@ -108,6 +111,14 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
             SectionTitle(stringResource(R.string.section_language))
             LanguageSelector(language) { settingsViewModel.setLanguage(it) }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            SectionTitle(stringResource(R.string.section_save_path))
+            SavePathSelector(
+                customSaveTreeUri = customSaveTreeUri,
+                onChoose = { uri -> settingsViewModel.setCustomSaveTreeUri(uri) },
+                onReset = { settingsViewModel.setCustomSaveTreeUri("") }
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
             SectionTitle(stringResource(R.string.section_recording_quality))
@@ -627,6 +638,113 @@ private fun LanguageSelector(selected: Language, onSelected: (Language) -> Unit)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SavePathSelector(
+    customSaveTreeUri: String,
+    onChoose: (String) -> Unit,
+    onReset: () -> Unit
+) {
+    val context = LocalContext.current
+    val folderLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            LogManager.log(LogManager.TAG_UI, "Save folder selected: $uri")
+            onChoose(uri.toString())
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (customSaveTreeUri.isEmpty()) stringResource(R.string.save_path_default)
+                    else stringResource(R.string.save_path_custom),
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                if (customSaveTreeUri.isNotEmpty()) {
+                    TextButton(onClick = onReset) {
+                        Text(stringResource(R.string.btn_reset_default))
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = if (customSaveTreeUri.isEmpty()) {
+                    stringResource(R.string.current_path, defaultSavePath(context))
+                } else {
+                    customSaveTreeUri
+                },
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row {
+                Button(
+                    onClick = { folderLauncher.launch(null) },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(stringResource(R.string.btn_choose_folder))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { openFolder(context, customSaveTreeUri) },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(stringResource(R.string.btn_open_folder))
+                }
+            }
+        }
+    }
+}
+
+private fun defaultSavePath(context: Context): String {
+    return try {
+        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES)
+        File(dir, "ScreenPulse").absolutePath
+    } catch (e: Exception) {
+        "ScreenPulse"
+    }
+}
+
+private fun openFolder(context: Context, customTreeUri: String) {
+    return try {
+        val intent: Intent
+        if (customTreeUri.isNotEmpty()) {
+            val treeUri = android.net.Uri.parse(customTreeUri)
+            intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(treeUri, androidx.documentfile.provider.DocumentFile.MIME_TYPE_DIR)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } else {
+            val dir = java.io.File(defaultSavePath(context))
+            if (!dir.exists()) dir.mkdirs()
+            val authority = "${context.packageName}.fileprovider"
+            val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, dir)
+            intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "resource/folder")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }
+    } catch (e: Exception) {
+        LogManager.log(LogManager.TAG_UI, "openFolder failed: ${e.message}")
     }
 }
 
