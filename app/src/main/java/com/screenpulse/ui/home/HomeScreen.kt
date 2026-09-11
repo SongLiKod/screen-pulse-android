@@ -81,7 +81,7 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         while (isActive) {
             val newState = com.screenpulse.shortcut.RecordingStateManager.currentState
-n            recordingViewModel.setRecordingState(newState)
+            recordingViewModel.setRecordingState(newState)
             recordingViewModel.updateCountdown(com.screenpulse.shortcut.RecordingStateManager.countdownRemaining)
             recordingViewModel.updateDuration(com.screenpulse.shortcut.RecordingStateManager.currentDurationMs)
             // Detect recording completed: transition from RECORDING/PAUSED -> IDLE

@@ -17,6 +17,10 @@ class VideoCompressWorker(
     params: WorkerParameters
 ) : CoroutineWorker(context, params) {
 
+    private fun MediaFormat.getIntegerOrNull(key: String): Int? {
+        return if (containsKey(key)) getInteger(key) else null
+    }
+
     companion object {
         const val KEY_INPUT_PATH = "input_path"
         const val KEY_OUTPUT_PATH = "output_path"
@@ -75,8 +79,8 @@ class VideoCompressWorker(
             CompressionMode.FAST -> Pair(2000000, 24)
             CompressionMode.BALANCED -> Pair(4000000, 30)
             CompressionMode.HD_LOSSLESS -> Pair(
-                videoFormat?.getInteger(MediaFormat.KEY_BIT_RATE) ?: 8000000,
-                videoFormat?.getInteger(MediaFormat.KEY_FRAME_RATE) ?: 30
+                videoFormat?.getIntegerOrNull(MediaFormat.KEY_BIT_RATE) ?: 8000000,
+                videoFormat?.getIntegerOrNull(MediaFormat.KEY_FRAME_RATE) ?: 30
             )
         }
 
