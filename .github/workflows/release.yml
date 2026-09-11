@@ -47,25 +47,70 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Decode Keystore
+      - name: Check signing secrets
+        if: ${{ github.event.inputs.tag != '' }}
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/keystore.jks
+          if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "::error::Secret KEYSTORE_BASE64 is not configured."
+            exit 1
+          fi
+          if [ -z "${{ secrets.KEYSTORE_PASSWORD }}" ]; then
+            echo "::error::Secret KEYSTORE_PASSWORD is not configured."
+            exit 1
+          fi
+          if [ -z "${{ secrets.KEY_ALIAS }}" ]; then
+            echo "::error::Secret KEY_ALIAS is not configured."
+            exit 1
+          fi
+          if [ -z "${{ secrets.KEY_PASSWORD }}" ]; then
+            echo "::error::Secret KEY_PASSWORD is not configured."
+            exit 1
+          fi
+          echo "All signing secrets are configured."
+
+      - name: Decode Keystore
+        if: ${{ github.event.inputs.tag != '' }}
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | tr -d ' \t\r\n' | base64 --decode > app/screen-keystore.jks || true
+          SIZE=$(wc -c < app/screen-keystore.jks)
+          echo "Decoded keystore size: $SIZE bytes"
+          if [ "$SIZE" -eq 0 ]; then
+            echo "::error::Decoded keystore is empty. Check the KEYSTORE_BASE64 secret."
+            exit 1
+          fi
+          MAGIC=$(xxd -p -l 4 app/screen-keystore.jks)
+          echo "Keystore magic bytes: $MAGIC"
+          if [ "$MAGIC" = "feedfeed" ]; then
+            echo "Keystore format: JKS"
+          else
+            echo "::warning::Keystore does not look like JKS (magic != feedfeed). It may be PKCS12. Regenerate with '-storetype JKS' if signing fails."
+          fi
 
       - name: Create keystore.properties
+        if: ${{ github.event.inputs.tag != '' }}
         run: |
-          echo "storeFile=keystore.jks" > keystore.properties
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> keystore.properties
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> keystore.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> keystore.properties
+          printf 'storeFile=screen-keystore.jks\n' > keystore.properties
+          printf 'storePassword=%s\n' "${{ secrets.KEYSTORE_PASSWORD }}" >> keystore.properties
+          printf 'keyAlias=%s\n' "${{ secrets.KEY_ALIAS }}" >> keystore.properties
+          printf 'keyPassword=%s\n' "${{ secrets.KEY_PASSWORD }}" >> keystore.properties
 
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
+      - name: Build APK
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "Tag provided (${{ github.event.inputs.tag }}): building signed release APK"
+            ./gradlew assembleRelease
+          else
+            echo "No tag: building debug APK for compile test"
+            ./gradlew assembleDebug
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: ScreenPulse-build
-          path: app/build/outputs/apk/release/*.apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
           retention-days: 14
 
   release:

@@ -46,4 +46,4 @@ Thumbs.db
 app/.cxx/
 
 # Keystore
-app/keystore.jks
+app/screen-keystore.jks
