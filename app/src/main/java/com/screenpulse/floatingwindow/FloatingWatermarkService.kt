@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
+import com.screenpulse.util.LogManager
 
 class FloatingWatermarkService : Service() {
 
@@ -32,9 +33,13 @@ class FloatingWatermarkService : Service() {
         when (intent?.action) {
             ACTION_SHOW -> {
                 val text = intent.getStringExtra(EXTRA_TEXT) ?: ""
+                LogManager.log(LogManager.TAG_WATERMARK, "show watermark: $text")
                 showWatermark(text)
             }
-            ACTION_HIDE -> hideWatermark()
+            ACTION_HIDE -> {
+                LogManager.log(LogManager.TAG_WATERMARK, "hide watermark")
+                hideWatermark()
+            }
         }
         return START_STICKY
     }

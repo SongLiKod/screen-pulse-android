@@ -24,11 +24,27 @@ class ShortcutKeyReceiver : BroadcastReceiver() {
 }
 
 object RecordingStateManager {
+    @Volatile
     var currentState: RecordingState = RecordingState.IDLE
+
+    @Volatile
+    var currentDurationMs: Long = 0L
+
+    @Volatile
+    var countdownRemaining: Int = 0
+
     var configuredKeyCode: Int = 0
 
     fun updateState(state: RecordingState) {
         currentState = state
+    }
+
+    fun updateDuration(durationMs: Long) {
+        currentDurationMs = durationMs
+    }
+
+    fun updateCountdown(remaining: Int) {
+        countdownRemaining = remaining
     }
 
     fun setKeyCode(keyCode: Int) {

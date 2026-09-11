@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import com.screenpulse.R
 import com.screenpulse.service.ScreenRecordService
 import com.screenpulse.viewmodel.RecordingState
+import com.screenpulse.util.LogManager
 
 class FloatingWindowService : Service() {
 
@@ -41,10 +42,18 @@ class FloatingWindowService : Service() {
             ACTION_UPDATE_STATE -> {
                 val stateValue = intent.getIntExtra(EXTRA_STATE, 0)
                 currentState = RecordingState.entries[stateValue]
+                LogManager.log(LogManager.TAG_FLOAT, "state update -> ${currentState}")
                 updateFloatingIcon()
             }
-            ACTION_HIDE -> removeFloatingView()
-            ACTION_SHOW -> addFloatingView()
+            ACTION_HIDE -> {
+                LogManager.log(LogManager.TAG_FLOAT, "hide floating window")
+                removeFloatingView()
+            }
+            ACTION_SHOW -> {
+                LogManager.log(LogManager.TAG_FLOAT, "show floating window")
+                addFloatingView()
+            }
+            else -> LogManager.log(LogManager.TAG_FLOAT, "onStartCommand action=${intent?.action}")
         }
 
         if (floatingView == null) {
@@ -211,6 +220,7 @@ class FloatingWindowService : Service() {
     }
 
     override fun onDestroy() {
+        LogManager.log(LogManager.TAG_FLOAT, "floating window destroyed")
         removeFloatingView()
         floatingView = null
         super.onDestroy()

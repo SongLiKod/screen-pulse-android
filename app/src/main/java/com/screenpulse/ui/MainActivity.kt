@@ -19,6 +19,7 @@ import androidx.navigation.navArgument
 import com.screenpulse.navigation.Screen
 import com.screenpulse.repository.ThemeMode
 import com.screenpulse.ui.home.HomeScreen
+import com.screenpulse.ui.log.LogScreen
 import com.screenpulse.ui.preview.VideoPreviewScreen
 import com.screenpulse.ui.settings.SettingsScreen
 import com.screenpulse.ui.theme.ScreenPulseTheme
@@ -59,7 +60,13 @@ class MainActivity : ComponentActivity() {
                                 recordingViewModel = recordingViewModel,
                                 settingsViewModel = settingsViewModel,
                                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                                onNavigateToVideoList = { navController.navigate(Screen.VideoList.route) }
+                                onNavigateToVideoList = { navController.navigate(Screen.VideoList.route) },
+                                onNavigateToLogs = { navController.navigate(Screen.Logs.route) }
+                            )
+                        }
+                        composable(Screen.Logs.route) {
+                            LogScreen(
+                                onBack = { navController.popBackStack() }
                             )
                         }
                         composable(Screen.Settings.route) {

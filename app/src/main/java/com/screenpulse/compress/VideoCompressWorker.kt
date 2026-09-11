@@ -10,6 +10,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.WorkerParameters
 import com.screenpulse.repository.CompressionMode
+import com.screenpulse.util.LogManager
 
 class VideoCompressWorker(
     private val context: Context,
@@ -28,13 +29,16 @@ class VideoCompressWorker(
         val outputPath = inputData.getString(KEY_OUTPUT_PATH) ?: return Result.failure()
         val modeValue = inputData.getInt(KEY_COMPRESSION_MODE, CompressionMode.BALANCED.value)
         val mode = CompressionMode.fromValue(modeValue)
+        LogManager.log(LogManager.TAG_COMPRESS, "compress start: $inputPath -> $outputPath mode=$mode")
 
         return try {
             compressVideo(inputPath, outputPath, mode)
+            LogManager.log(LogManager.TAG_COMPRESS, "compress done: ${outputPath}")
             Result.success(Data.Builder()
                 .putString(KEY_OUTPUT_PATH, outputPath)
                 .build())
         } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_COMPRESS, "compress FAILED", e)
             Result.failure(Data.Builder()
                 .putString("error", e.message)
                 .build())

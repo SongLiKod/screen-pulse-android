@@ -21,6 +21,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.core.content.ContextCompat
 import com.screenpulse.R
+import com.screenpulse.util.LogManager
 
 class FloatingPipService : Service() {
 
@@ -48,9 +49,13 @@ class FloatingPipService : Service() {
         when (intent?.action) {
             ACTION_SHOW -> {
                 pipSize = intent.getIntExtra(EXTRA_SIZE, 150)
+                LogManager.log(LogManager.TAG_PIP, "show pip overlay size=$pipSize")
                 showPipOverlay()
             }
-            ACTION_HIDE -> hidePipOverlay()
+            ACTION_HIDE -> {
+                LogManager.log(LogManager.TAG_PIP, "hide pip overlay")
+                hidePipOverlay()
+            }
             ACTION_SET_SIZE -> {
                 pipSize = intent.getIntExtra(EXTRA_SIZE, 150)
                 updatePipSize()
@@ -245,6 +250,7 @@ class FloatingPipService : Service() {
     }
 
     override fun onDestroy() {
+        LogManager.log(LogManager.TAG_PIP, "pip service destroyed")
         hidePipOverlay()
         super.onDestroy()
     }

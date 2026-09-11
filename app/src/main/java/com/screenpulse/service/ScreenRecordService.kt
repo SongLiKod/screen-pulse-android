@@ -47,6 +47,8 @@ import com.screenpulse.repository.RecordMode
 import com.screenpulse.repository.Resolution
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.jni.NativeBridge
+import com.screenpulse.shortcut.RecordingStateManager
+import com.screenpulse.util.LogManager
 import kotlinx.coroutines.*
 import java.io.File
 import java.nio.ByteBuffer
@@ -143,9 +145,11 @@ class ScreenRecordService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        LogManager.log(LogManager.TAG_RECORD, "ScreenRecordService created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        LogManager.log(LogManager.TAG_RECORD, "onStartCommand action=${intent?.action} flags=$flags startId=$startId")
         when (intent?.action) {
             ACTION_START -> handleStart(intent)
             ACTION_STOP -> handleStop()
@@ -168,6 +172,7 @@ class ScreenRecordService : Service() {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(EXTRA_RESULT_DATA)
         }
+        LogManager.log(LogManager.TAG_RECORD, "handleStart resultCode=$resultCode resultData=${resultData != null}")
 
         currentResolution = Resolution.fromValue(intent.getStringExtra(EXTRA_RESOLUTION) ?: "1080P")
         currentFrameRate = FrameRate.fromValue(intent.getIntExtra(EXTRA_FRAME_RATE, 30))
@@ -189,6 +194,8 @@ class ScreenRecordService : Service() {
 
         val countdown = CountdownMode.fromValue(intent.getIntExtra(EXTRA_COUNTDOWN, 0))
         if (countdown != CountdownMode.NONE) {
+            RecordingStateManager.updateState(RecordingState.COUNTDOWN)
+            syncFloatingWindow(RecordingState.COUNTDOWN)
             stateCallback?.onStateChanged(RecordingState.COUNTDOWN)
             startCountdown(countdown.value, resultCode, resultData)
         } else {
@@ -199,18 +206,37 @@ class ScreenRecordService : Service() {
     private fun startCountdown(seconds: Int, resultCode: Int, resultData: Intent?) {
         serviceScope.launch {
             for (i in seconds downTo 1) {
+                RecordingStateManager.updateCountdown(i)
                 stateCallback?.onCountdownTick(i)
                 delay(1000L)
             }
+            RecordingStateManager.updateCountdown(0)
             startRecordingInternal(resultCode, resultData)
         }
     }
 
     private fun startRecordingInternal(resultCode: Int, resultData: Intent?) {
-        if (resultCode < 0 || resultData == null) return
+        if (resultCode < 0 || resultData == null) {
+            RecordingStateManager.updateState(RecordingState.IDLE)
+            return
+        }
+
+        // Android 14 (targetSdk 34) requires the mediaProjection foreground service
+        // to be running BEFORE getMediaProjection()/createVirtualDisplay() are called.
+        startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
 
         val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
+        mediaProjection = try {
+            projectionManager.getMediaProjection(resultCode, resultData)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "getMediaProjection FAILED", e)
+            e.printStackTrace()
+            RecordingStateManager.updateState(RecordingState.IDLE)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        LogManager.log(LogManager.TAG_RECORD, "getMediaProjection OK")
 
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
@@ -228,8 +254,11 @@ class ScreenRecordService : Service() {
         }
 
         outputFile = generateOutputFile()
-
-        startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        LogManager.log(LogManager.TAG_RECORD,
+            "start recording: res=${currentResolution.value} ${width}x$height fps=${currentFrameRate.value} " +
+            "bitrate=${
+                if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
+            } audioMode=${currentAudioMode} recordMode=${currentRecordMode} out=${outputFile?.name}")
 
         try {
             NativeBridge.nativeInit()
@@ -256,7 +285,11 @@ class ScreenRecordService : Service() {
             totalPausedDuration = 0L
 
             startDurationTracking()
+            RecordingStateManager.updateDuration(0L)
+            RecordingStateManager.updateState(RecordingState.RECORDING)
+            syncFloatingWindow(RecordingState.RECORDING)
             stateCallback?.onStateChanged(RecordingState.RECORDING)
+            LogManager.log(LogManager.TAG_RECORD, "RECORDING started")
 
             if (watermarkEnabled && watermarkText.isNotEmpty()) {
                 val watermarkIntent = Intent(this, com.screenpulse.floatingwindow.FloatingWatermarkService::class.java).apply {
@@ -264,10 +297,13 @@ class ScreenRecordService : Service() {
                     putExtra(com.screenpulse.floatingwindow.FloatingWatermarkService.EXTRA_TEXT, watermarkText)
                 }
                 startService(watermarkIntent)
+                LogManager.log(LogManager.TAG_RECORD, "Watermark enabled: $watermarkText")
             }
         } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "Recording setup FAILED", e)
             e.printStackTrace()
             cleanup()
+            RecordingStateManager.updateState(RecordingState.IDLE)
             stateCallback?.onError(e.message ?: "Recording failed")
         }
     }
@@ -286,6 +322,7 @@ class ScreenRecordService : Service() {
             setInteger(MediaFormat.KEY_FRAME_RATE, currentFrameRate.value)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
+        LogManager.log(LogManager.TAG_RECORD, "setupMediaCodec ${width}x$height bitrate=${format.getInteger(MediaFormat.KEY_BIT_RATE)} fps=${currentFrameRate.value}")
 
         mediaCodec = try {
             MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).apply {
@@ -324,6 +361,8 @@ class ScreenRecordService : Service() {
         recordWidth = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0) customWidth else width
         recordHeight = if (currentRecordMode == RecordMode.CUSTOM_REGION && customHeight > 0) customHeight else height
         recordDensityDpi = densityDpi
+        LogManager.log(LogManager.TAG_RECORD,
+            "setupVirtualDisplay ${recordWidth}x$recordHeight density=$recordDensityDpi mode=${if (currentRecordMode == RecordMode.CUSTOM_REGION) "custom" else "full"}")
 
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenPulse",
@@ -578,6 +617,7 @@ class ScreenRecordService : Service() {
 
     private fun handlePause() {
         if (!isRecording || isPaused) return
+        LogManager.log(LogManager.TAG_RECORD, "PAUSE requested")
         isPaused = true
         pausedDuration = System.currentTimeMillis()
         durationJob?.cancel()
@@ -585,23 +625,29 @@ class ScreenRecordService : Service() {
         virtualDisplay = null
         runCatching { micAudioRecord?.stop() }
         runCatching { systemAudioRecord?.stop() }
+        RecordingStateManager.updateState(RecordingState.PAUSED)
+        syncFloatingWindow(RecordingState.PAUSED)
         stateCallback?.onStateChanged(RecordingState.PAUSED)
         updateNotification(getString(R.string.paused))
     }
 
     private fun handleResume() {
         if (!isRecording || !isPaused) return
+        LogManager.log(LogManager.TAG_RECORD, "RESUME requested")
         isPaused = false
         totalPausedDuration += System.currentTimeMillis() - pausedDuration
         runCatching { micAudioRecord?.startRecording() }
         runCatching { systemAudioRecord?.startRecording() }
         recreateVirtualDisplay()
         startDurationTracking()
+        RecordingStateManager.updateState(RecordingState.RECORDING)
+        syncFloatingWindow(RecordingState.RECORDING)
         stateCallback?.onStateChanged(RecordingState.RECORDING)
         updateNotification(getString(R.string.recording))
     }
 
     private fun handleStop() {
+        LogManager.log(LogManager.TAG_RECORD, "STOP requested")
         isRecording = false
         isPaused = false
         durationJob?.cancel()
@@ -616,8 +662,12 @@ class ScreenRecordService : Service() {
         cleanup()
 
         val savedFile = outputFile
+        RecordingStateManager.updateDuration(0L)
+        RecordingStateManager.updateState(RecordingState.IDLE)
+        syncFloatingWindow(RecordingState.IDLE)
         stateCallback?.onStateChanged(RecordingState.IDLE)
         stateCallback?.onRecordingComplete(savedFile?.absolutePath)
+        LogManager.log(LogManager.TAG_RECORD, "Recording stopped. saved=${savedFile?.exists() == true} size=${savedFile?.length()?.let { it / 1024 } ?: 0}KB path=${savedFile?.path}")
 
         if (savedFile != null && savedFile.exists()) {
             triggerCompression(savedFile.absolutePath)
@@ -633,6 +683,7 @@ class ScreenRecordService : Service() {
     }
 
     private fun triggerCompression(inputPath: String) {
+        LogManager.log(LogManager.TAG_RECORD, "Enqueue compression: $inputPath mode=${currentCompressionMode}")
         val compressData = Data.Builder()
             .putString(VideoCompressWorker.KEY_INPUT_PATH, inputPath)
             .putString(VideoCompressWorker.KEY_OUTPUT_PATH, inputPath.replace(".mp4", "_compressed.mp4"))
@@ -647,7 +698,11 @@ class ScreenRecordService : Service() {
     }
 
     private fun takeScreenshot() {
-        val projection = mediaProjection ?: return
+        LogManager.log(LogManager.TAG_RECORD, "Screenshot requested")
+        val projection = mediaProjection ?: run {
+            LogManager.log(LogManager.TAG_RECORD, "Screenshot skipped: mediaProjection is null")
+            return
+        }
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
@@ -691,10 +746,13 @@ class ScreenRecordService : Service() {
 
                     saveScreenshot(croppedBitmap)
                 } catch (e: Exception) {
+                    LogManager.log(LogManager.TAG_RECORD, "Screenshot capture failed", e)
                     e.printStackTrace()
                 } finally {
                     image.close()
                 }
+            } else {
+                LogManager.log(LogManager.TAG_RECORD, "Screenshot image is null")
             }
 
             screenshotDisplay.release()
@@ -712,8 +770,10 @@ class ScreenRecordService : Service() {
             file.outputStream().use { out ->
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
             }
+            LogManager.log(LogManager.TAG_RECORD, "Screenshot saved: ${file.absolutePath}")
             stateCallback?.onScreenshotSaved(file.absolutePath)
         } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "Screenshot save failed", e)
             e.printStackTrace()
         } finally {
             bitmap.recycle()
@@ -722,6 +782,7 @@ class ScreenRecordService : Service() {
 
     private fun cleanup() {
         try {
+            LogManager.log(LogManager.TAG_RECORD, "cleanup: releasing resources")
             encodeJob?.cancel()
             audioEncodeJob?.cancel()
             virtualDisplay?.release()
@@ -749,7 +810,9 @@ class ScreenRecordService : Service() {
             mediaProjection = null
 
             NativeBridge.nativeRelease()
+            LogManager.log(LogManager.TAG_RECORD, "cleanup done")
         } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "cleanup error", e)
             e.printStackTrace()
         }
     }
@@ -759,6 +822,7 @@ class ScreenRecordService : Service() {
         durationJob = serviceScope.launch {
             while (isActive && isRecording && !isPaused) {
                 val elapsed = System.currentTimeMillis() - recordingStartTime - totalPausedDuration
+                RecordingStateManager.updateDuration(elapsed)
                 stateCallback?.onDurationUpdate(elapsed)
                 delay(100L)
             }
@@ -770,6 +834,19 @@ class ScreenRecordService : Service() {
         val dir = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
         if (!dir.exists()) dir.mkdirs()
         return File(dir, "ScreenPulse_$timestamp.mp4")
+    }
+
+    private fun syncFloatingWindow(state: RecordingState) {
+        try {
+            val intent = Intent(this, com.screenpulse.floatingwindow.FloatingWindowService::class.java).apply {
+                action = com.screenpulse.floatingwindow.FloatingWindowService.ACTION_UPDATE_STATE
+                putExtra(com.screenpulse.floatingwindow.FloatingWindowService.EXTRA_STATE, state.ordinal)
+            }
+            startService(intent)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "syncFloatingWindow failed", e)
+            e.printStackTrace()
+        }
     }
 
     private fun createNotificationChannel() {

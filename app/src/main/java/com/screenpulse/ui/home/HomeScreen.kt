@@ -34,6 +34,9 @@ import com.screenpulse.service.ScreenRecordService
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.viewmodel.RecordingViewModel
 import com.screenpulse.viewmodel.SettingsViewModel
+import com.screenpulse.util.LogManager
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -42,7 +45,8 @@ fun HomeScreen(
     recordingViewModel: RecordingViewModel,
     settingsViewModel: SettingsViewModel,
     onNavigateToSettings: () -> Unit,
-    onNavigateToVideoList: () -> Unit
+    onNavigateToVideoList: () -> Unit,
+    onNavigateToLogs: () -> Unit
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -66,12 +70,22 @@ fun HomeScreen(
     val customResolutionWidth by settingsViewModel.customResolutionWidth.collectAsState()
     val customResolutionHeight by settingsViewModel.customResolutionHeight.collectAsState()
 
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            recordingViewModel.setRecordingState(com.screenpulse.shortcut.RecordingStateManager.currentState)
+            recordingViewModel.updateCountdown(com.screenpulse.shortcut.RecordingStateManager.countdownRemaining)
+            recordingViewModel.updateDuration(com.screenpulse.shortcut.RecordingStateManager.currentDurationMs)
+            delay(150L)
+        }
+    }
+
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showOverlayDialog by remember { mutableStateOf(false) }
 
     val mediaProjectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        LogManager.log(LogManager.TAG_UI, "MediaProjection result: code=${result.resultCode} data=${result.data != null}")
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             startRecording(
                 context = context,
@@ -104,10 +118,13 @@ fun HomeScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val allGranted = permissions.values.all { it }
+        LogManager.log(LogManager.TAG_UI, "Permission result: allGranted=$allGranted perms=$permissions")
         if (allGranted) {
             if (!PermissionManager.hasOverlayPermission(context)) {
+                LogManager.log(LogManager.TAG_UI, "Overlay permission missing, show dialog")
                 showOverlayDialog = true
             } else {
+                LogManager.log(LogManager.TAG_UI, "Launching MediaProjection permission")
                 mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
             }
         } else {
@@ -120,6 +137,9 @@ fun HomeScreen(
             TopAppBar(
                 title = { Text("ScreenPulse", fontWeight = FontWeight.Bold) },
                 actions = {
+                    IconButton(onClick = onNavigateToLogs) {
+                        Icon(Icons.Default.BugReport, contentDescription = "Logs")
+                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
@@ -152,6 +172,7 @@ fun HomeScreen(
                             context, perm
                         ) != android.content.pm.PackageManager.PERMISSION_GRANTED
                     }
+                    LogManager.log(LogManager.TAG_UI, "Record button: needsPermission=$needsPermission overlay=${PermissionManager.hasOverlayPermission(context)}")
                     if (needsPermission) {
                         permissionLauncher.launch(permissions)
                     } else if (!PermissionManager.hasOverlayPermission(context)) {

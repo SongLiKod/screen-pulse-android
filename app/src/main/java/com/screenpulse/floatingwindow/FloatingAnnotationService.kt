@@ -19,6 +19,7 @@ import android.widget.LinearLayout
 import androidx.core.content.ContextCompat
 import com.screenpulse.R
 import com.screenpulse.ui.annotation.AnnotationOverlayView
+import com.screenpulse.util.LogManager
 
 class FloatingAnnotationService : Service() {
 
@@ -45,13 +46,21 @@ class FloatingAnnotationService : Service() {
                 Configuration.UI_MODE_NIGHT_YES
 
         when (intent?.action) {
-            ACTION_SHOW -> showAnnotationOverlay()
-            ACTION_HIDE -> hideAnnotationOverlay()
+            ACTION_SHOW -> {
+                LogManager.log(LogManager.TAG_ANNOTATION, "show annotation overlay")
+                showAnnotationOverlay()
+            }
+            ACTION_HIDE -> {
+                LogManager.log(LogManager.TAG_ANNOTATION, "hide annotation overlay")
+                hideAnnotationOverlay()
+            }
             ACTION_SET_TOOL -> {
                 val toolValue = intent.getIntExtra(EXTRA_TOOL, 0)
                 val tool = AnnotationOverlayView.AnnotationTool.entries[toolValue]
+                LogManager.log(LogManager.TAG_ANNOTATION, "set tool -> $tool")
                 annotationView?.setTool(tool)
             }
+            else -> LogManager.log(LogManager.TAG_ANNOTATION, "onStartCommand action=${intent?.action}")
         }
 
         return START_STICKY
