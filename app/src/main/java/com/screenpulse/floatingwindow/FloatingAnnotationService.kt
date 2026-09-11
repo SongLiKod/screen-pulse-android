@@ -128,16 +128,15 @@ class FloatingAnnotationService : Service() {
     }
 
     private fun showTextInputDialog() {
-        val tempView = View(this)
         val editText = EditText(this).apply {
-            hint = "Enter text"
+            hint = getString(R.string.annotation_enter_text)
             setPadding(32, 24, 32, 24)
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Add Text")
+            .setTitle(getString(R.string.annotation_add_text))
             .setView(editText)
-            .setPositiveButton("Confirm") { _, _ ->
+            .setPositiveButton(getString(R.string.confirm)) { _, _ ->
                 val text = editText.text.toString()
                 if (text.isNotEmpty()) {
                     pendingTextPosition?.let { (x, y) ->
@@ -146,7 +145,7 @@ class FloatingAnnotationService : Service() {
                 }
                 pendingTextPosition = null
             }
-            .setNegativeButton("Cancel") { _, _ ->
+            .setNegativeButton(getString(R.string.cancel)) { _, _ ->
                 pendingTextPosition = null
             }
             .setOnDismissListener {
@@ -167,9 +166,9 @@ class FloatingAnnotationService : Service() {
         }
 
         val tools = listOf(
-            Triple(AnnotationOverlayView.AnnotationTool.PEN, R.drawable.ic_pen, "Pen"),
-            Triple(AnnotationOverlayView.AnnotationTool.ARROW, R.drawable.ic_arrow, "Arrow"),
-            Triple(AnnotationOverlayView.AnnotationTool.TEXT, R.drawable.ic_text, "Text"),
+            Triple(AnnotationOverlayView.AnnotationTool.PEN, R.drawable.ic_pen, getString(R.string.tool_pen)),
+            Triple(AnnotationOverlayView.AnnotationTool.ARROW, R.drawable.ic_arrow, getString(R.string.tool_arrow)),
+            Triple(AnnotationOverlayView.AnnotationTool.TEXT, R.drawable.ic_text, getString(R.string.tool_text)),
         )
 
         tools.forEach { (tool, iconRes, desc) ->
@@ -186,7 +185,7 @@ class FloatingAnnotationService : Service() {
 
         val undoBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_undo)
-            contentDescription = "Undo"
+            contentDescription = getString(R.string.cd_undo)
             setPadding(12, 12, 12, 12)
             setOnClickListener { annotationView?.undo() }
         }
@@ -194,7 +193,7 @@ class FloatingAnnotationService : Service() {
 
         val clearBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_clear)
-            contentDescription = "Clear"
+            contentDescription = getString(R.string.cd_clear_draw)
             setPadding(12, 12, 12, 12)
             setOnClickListener { annotationView?.clearAll() }
         }
@@ -202,7 +201,7 @@ class FloatingAnnotationService : Service() {
 
         val closeBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_close)
-            contentDescription = "Close"
+            contentDescription = getString(R.string.cd_close)
             setPadding(12, 12, 12, 12)
             setOnClickListener { hideAnnotationOverlay() }
         }

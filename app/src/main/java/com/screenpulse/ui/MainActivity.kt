@@ -1,15 +1,21 @@
 package com.screenpulse.ui
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -25,10 +31,19 @@ import com.screenpulse.ui.settings.SettingsScreen
 import com.screenpulse.ui.theme.ScreenPulseTheme
 import com.screenpulse.ui.trim.VideoTrimScreen
 import com.screenpulse.ui.videolist.VideoListScreen
+import com.screenpulse.util.LogManager
+import com.screenpulse.util.ProjectionRequestBus
 import com.screenpulse.viewmodel.RecordingViewModel
 import com.screenpulse.viewmodel.SettingsViewModel
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
+
+    private val projectionRequestReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            LogManager.log(LogManager.TAG_UI, "Received projection request broadcast")
+            ProjectionRequestBus.request()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -126,5 +141,21 @@ class MainActivity : ComponentActivity() {
         return resources.configuration.uiMode and
                 android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
                 android.content.res.Configuration.UI_MODE_NIGHT_YES
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(ProjectionRequestBus.REQUEST_PROJECTION_ACTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(projectionRequestReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(projectionRequestReceiver, filter)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        runCatching { unregisterReceiver(projectionRequestReceiver) }
     }
 }

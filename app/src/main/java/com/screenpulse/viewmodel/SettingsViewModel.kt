@@ -1,6 +1,8 @@
 package com.screenpulse.viewmodel
 
 import android.app.Application
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.screenpulse.ScreenPulseApp
@@ -75,6 +77,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val bitrateMode: StateFlow<BitrateMode> = repository.bitrateMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, BitrateMode.SMART)
 
+    val language: StateFlow<Language> = repository.language
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Language.SYSTEM)
+
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { repository.setThemeMode(mode) }
     fun setAudioMode(mode: AudioMode) = viewModelScope.launch { repository.setAudioMode(mode) }
     fun setResolution(res: Resolution) = viewModelScope.launch { repository.setResolution(res) }
@@ -101,4 +106,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setCustomResolutionWidth(width: Int) = viewModelScope.launch { repository.setCustomResolutionWidth(width) }
     fun setCustomResolutionHeight(height: Int) = viewModelScope.launch { repository.setCustomResolutionHeight(height) }
     fun setBitrateMode(mode: BitrateMode) = viewModelScope.launch { repository.setBitrateMode(mode) }
+
+    fun setLanguage(language: Language) = viewModelScope.launch {
+        repository.setLanguage(language)
+        applyLanguage(language)
+    }
+
+    private fun applyLanguage(language: Language) {
+        val locales = if (language == Language.SYSTEM || language.tag.isEmpty()) {
+            LocaleListCompat.getEmptyLocaleList()
+        } else {
+            LocaleListCompat.forLanguageTags(language.tag)
+        }
+        AppCompatDelegate.setApplicationLocales(locales)
+    }
 }

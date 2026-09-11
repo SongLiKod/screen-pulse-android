@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">瞬录</string>
+    <string name="recording">录制中</string>
+    <string name="paused">已暂停</string>
+    <string name="idle">空闲</string>
+    <string name="start_recording">开始录制</string>
+    <string name="stop_recording">结束录制</string>
+    <string name="pause_recording">暂停</string>
+    <string name="resume_recording">继续</string>
+    <string name="settings">设置</string>
+    <string name="video_list">视频列表</string>
+    <string name="home">首页</string>
+    <string name="theme">主题</string>
+    <string name="follow_system">跟随系统</string>
+    <string name="light_mode">浅色模式</string>
+    <string name="dark_mode">深色模式</string>
+    <string name="resolution">分辨率</string>
+    <string name="frame_rate">帧率</string>
+    <string name="bitrate">码率</string>
+    <string name="audio_mode">收音模式</string>
+    <string name="audio_system_only">仅系统声音</string>
+    <string name="audio_mic_only">仅麦克风声音</string>
+    <string name="audio_mixed">系统声 + 麦克风</string>
+    <string name="audio_system_only_desc">仅收录系统内部声音</string>
+    <string name="audio_mic_only_desc">仅收录外界人声并降噪</string>
+    <string name="audio_mixed_desc">同时收录双音源声音</string>
+    <string name="record_mode">录制模式</string>
+    <string name="full_screen">全屏</string>
+    <string name="custom_region">自定义区域</string>
+    <string name="compression_mode">压缩模式</string>
+    <string name="fast_compress">极速压缩</string>
+    <string name="balanced_compress">均衡压缩</string>
+    <string name="hd_compress">高清无损</string>
+    <string name="countdown">倒计时</string>
+    <string name="countdown_3s">3 秒</string>
+    <string name="countdown_5s">5 秒</string>
+    <string name="countdown_none">无</string>
+    <string name="shortcut_key">快捷键</string>
+    <string name="floating_window">悬浮窗</string>
+    <string name="hide_floating_window">隐藏悬浮窗</string>
+    <string name="show_floating_window">显示悬浮窗</string>
+    <string name="delete">删除</string>
+    <string name="rename">重命名</string>
+    <string name="share">分享</string>
+    <string name="preview">预览</string>
+    <string name="no_videos">暂无录制</string>
+    <string name="permission_required">需要权限</string>
+    <string name="record_permission_desc">需要屏幕录制和麦克风权限。</string>
+    <string name="overlay_permission_desc">悬浮窗需要悬浮窗权限。</string>
+    <string name="grant_permission">授权</string>
+    <string name="cancel">取消</string>
+    <string name="confirm">确定</string>
+    <string name="system_audio_unavailable">系统内录需要 Android 10 及以上版本</string>
+    <string name="watermark">水印</string>
+    <string name="watermark_text">水印文字</string>
+    <string name="system_volume">系统音量</string>
+    <string name="mic_volume">人声音量</string>
+    <string name="pip_recording">画中画录制</string>
+    <string name="screen_annotation">屏幕标注</string>
+    <string name="video_trim">视频裁剪</string>
+    <string name="screenshot">截图</string>
+    <string name="select_region">选择录制区域</string>
+    <string name="custom_resolution">自定义分辨率</string>
+    <string name="battery_optimization">电池优化</string>
+    <string name="battery_optimization_desc">为保证长时间录制稳定，请关闭瞬录的电池优化。</string>
+    <string name="shortcut_key_desc">瞬录的快捷键监听服务，用于控制录制。</string>
+
+    <string name="cd_logs">日志</string>
+    <string name="cd_settings">设置</string>
+    <string name="cd_back">返回</string>
+    <string name="cd_clear">清空</string>
+    <string name="cd_stop">停止</string>
+    <string name="cd_start_record">开始录制</string>
+
+    <string name="tap_to_record">点击录制</string>
+    <string name="starting">准备中...</string>
+    <string name="status_ready">就绪</string>
+    <string name="status_countdown">倒计时</string>
+    <string name="status_recording">录制中</string>
+    <string name="status_paused">已暂停</string>
+    <string name="current_settings">当前设置</string>
+    <string name="param_resolution">分辨率</string>
+    <string name="param_frame_rate">帧率</string>
+    <string name="param_audio">音频</string>
+    <string name="param_mode">模式</string>
+    <string name="audio_short_system">仅系统</string>
+    <string name="audio_short_mic">仅麦克风</string>
+    <string name="audio_short_mixed">系统 + 麦克风</string>
+    <string name="btn_videos">视频</string>
+    <string name="btn_pause">暂停</string>
+    <string name="btn_resume">继续</string>
+    <string name="permission_dialog_title">需要权限</string>
+    <string name="permission_dialog_text">录制需要屏幕录制和麦克风权限。</string>
+    <string name="overlay_dialog_title">悬浮窗权限</string>
+    <string name="overlay_dialog_text">悬浮窗控制需要悬浮窗权限。</string>
+
+    <string name="error_red_msg">录制失败：内部错误</string>
+
+    <string name="section_theme">主题</string>
+    <string name="section_recording_quality">录制画质</string>
+    <string name="section_audio">音频</string>
+    <string name="section_record_mode">录制模式</string>
+    <string name="section_compression">压缩</string>
+    <string name="section_countdown">倒计时</string>
+    <string name="section_watermark">水印</string>
+    <string name="section_shortcut">快捷键</string>
+    <string name="section_advanced">高级</string>
+    <string name="section_language">语言</string>
+
+    <string name="label_resolution">分辨率</string>
+    <string name="label_frame_rate">帧率</string>
+    <string name="fps_format">%1$s FPS</string>
+    <string name="label_bitrate">码率</string>
+    <string name="bitrate_mbps">%1$d Mbps</string>
+    <string name="bitrate_mode_select">码率模式</string>
+    <string name="bitrate_smart">智能适配</string>
+    <string name="bitrate_manual">手动</string>
+    <string name="bitrate_smart_desc">根据分辨率与帧率自动调整</string>
+    <string name="bitrate_manual_desc">手动设置码率</string>
+    <string name="bitrate_smart_value">智能适配：%1$d Mbps</string>
+    <string name="percent_format">%1$d%%</string>
+
+    <string name="label_width">宽</string>
+    <string name="label_height">高</string>
+    <string name="multiply">×</string>
+    <string name="system_audio_requires">系统内录需要 Android 10+，当前设备仅支持麦克风收音。</string>
+
+    <string name="full_screen_record">全屏录制</string>
+    <string name="region_record">自定义区域</string>
+    <string name="btn_select_region">选择录制区域</string>
+
+    <string name="compress_fast">极速压缩</string>
+    <string name="compress_balanced">均衡压缩</string>
+    <string name="compress_hd">高清无损</string>
+    <string name="compress_fast_desc">文件体积最小</string>
+    <string name="compress_balanced_desc">画质与体积平衡</string>
+    <string name="compress_hd_desc">保留最佳画质</string>
+
+    <string name="enable_watermark">开启水印</string>
+    <string name="watermark_type_select">水印类型</string>
+    <string name="watermark_text_type">文字水印</string>
+    <string name="watermark_image_type">图片水印</string>
+    <string name="select_image">选择图片</string>
+    <string name="change_image">更换图片</string>
+    <string name="image_selected">已选择图片</string>
+
+    <string name="shortcut_desc">配置用于控制录制的物理按键</string>
+    <string name="set_key">设置按键</string>
+    <string name="current_key">当前：%1$s</string>
+    <string name="press_key_title">请按下按键</string>
+    <string name="press_key_hint">请按下任意物理按键...</string>
+    <string name="key_value">按键：%1$s</string>
+
+    <string name="pip_recording_desc">录制时显示前置摄像头悬浮窗</string>
+    <string name="pip_size_format">画中画窗口大小：%1$sdp</string>
+
+    <string name="battery_disable">去关闭</string>
+    <string name="battery_later">稍后</string>
+
+    <string name="btn_ok">我知道了</string>
+
+    <string name="title_videos">视频列表</string>
+    <string name="delete_video">删除视频</string>
+    <string name="delete_confirm">确定要删除 "%1$s" 吗？</string>
+    <string name="rename_video">重命名</string>
+    <string name="file_name_label">文件名</string>
+
+    <string name="file_info">文件信息</string>
+    <string name="info_name">名称</string>
+    <string name="info_size">大小</string>
+    <string name="info_path">路径</string>
+
+    <string name="video_duration">视频时长</string>
+    <string name="trim_range">裁剪范围</string>
+    <string name="trim_start_label">起点：%1$s</string>
+    <string name="trim_end_label">终点：%1$s</string>
+    <string name="trim_duration_label">时长：%1$s</string>
+    <string name="action_trim">裁剪</string>
+    <string name="processing">处理中...</string>
+
+    <string name="title_logs">日志</string>
+    <string name="no_logs">暂无日志</string>
+    <string name="autoscroll_on">自动滚动：开（点击暂停）</string>
+    <string name="autoscroll_off">自动滚动：关（点击恢复）</string>
+    <string name="share_logs">分享日志</string>
+    <string name="share_subject">瞬录日志</string>
+    <string name="cd_rename">重命名</string>
+    <string name="cd_trim">裁剪</string>
+
+    <string name="region_hint">拖动框选录制区域</string>
+    <string name="cd_undo">撤销</string>
+    <string name="cd_clear_draw">清除</string>
+    <string name="cd_close">关闭</string>
+    <string name="tool_pen">画笔</string>
+    <string name="tool_arrow">箭头</string>
+    <string name="tool_text">文字</string>
+    <string name="annotation_add_text">添加文字</string>
+    <string name="annotation_enter_text">请输入文字</string>
+
+    <string name="language_follow_system">跟随系统</string>
+    <string name="language_english">English</string>
+    <string name="language_chinese">中文</string>
+</resources>

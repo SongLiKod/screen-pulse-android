@@ -168,19 +168,28 @@ class FloatingWindowService : Service() {
     }
 
     private fun handleClick() {
-        val intent = when (currentState) {
-            RecordingState.IDLE -> Intent(this, ScreenRecordService::class.java).apply {
-                action = ScreenRecordService.ACTION_START
+        when (currentState) {
+            RecordingState.IDLE -> {
+                LogManager.log(LogManager.TAG_FLOAT, "click: idle -> request MediaProjection from Activity")
+                val intent = Intent(com.screenpulse.util.ProjectionRequestBus.REQUEST_PROJECTION_ACTION).apply {
+                    setPackage(packageName)
+                }
+                sendBroadcast(intent)
             }
-            RecordingState.RECORDING -> Intent(this, ScreenRecordService::class.java).apply {
-                action = ScreenRecordService.ACTION_PAUSE
+            RecordingState.RECORDING -> {
+                LogManager.log(LogManager.TAG_FLOAT, "click: pause recording")
+                startService(Intent(this, ScreenRecordService::class.java).apply {
+                    action = ScreenRecordService.ACTION_PAUSE
+                })
             }
-            RecordingState.PAUSED -> Intent(this, ScreenRecordService::class.java).apply {
-                action = ScreenRecordService.ACTION_RESUME
+            RecordingState.PAUSED -> {
+                LogManager.log(LogManager.TAG_FLOAT, "click: resume recording")
+                startService(Intent(this, ScreenRecordService::class.java).apply {
+                    action = ScreenRecordService.ACTION_RESUME
+                })
             }
             RecordingState.COUNTDOWN -> return
         }
-        startService(intent)
     }
 
     private fun isDarkMode(): Boolean {

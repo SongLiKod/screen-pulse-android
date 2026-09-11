@@ -9,17 +9,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import com.screenpulse.R
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,10 +55,10 @@ fun VideoListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Videos") },
+                title = { Text(stringResource(R.string.title_videos)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -82,7 +85,7 @@ fun VideoListScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        "No recordings yet",
+                        stringResource(R.string.no_videos),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 16.sp
                     )
@@ -113,19 +116,19 @@ fun VideoListScreen(
         showDeleteDialog?.let { video ->
             AlertDialog(
                 onDismissRequest = { showDeleteDialog = null },
-                title = { Text("Delete Video") },
-                text = { Text("Are you sure you want to delete \"${video.name}\"?") },
+                title = { Text(stringResource(R.string.delete_video)) },
+                text = { Text(stringResource(R.string.delete_confirm, video.name)) },
                 confirmButton = {
                     TextButton(onClick = {
                         video.file.delete()
                         videos = loadVideos(context)
                         showDeleteDialog = null
                     }) {
-                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                        Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showDeleteDialog = null }) { Text("Cancel") }
+                    TextButton(onClick = { showDeleteDialog = null }) { Text(stringResource(R.string.cancel)) }
                 }
             )
         }
@@ -134,12 +137,12 @@ fun VideoListScreen(
             var newName by remember { mutableStateOf(video.name.replace(".mp4", "")) }
             AlertDialog(
                 onDismissRequest = { showRenameDialog = null },
-                title = { Text("Rename") },
+                title = { Text(stringResource(R.string.rename_video)) },
                 text = {
                     OutlinedTextField(
                         value = newName,
                         onValueChange = { newName = it },
-                        label = { Text("File name") },
+                        label = { Text(stringResource(R.string.file_name_label)) },
                         singleLine = true
                     )
                 },
@@ -149,10 +152,10 @@ fun VideoListScreen(
                         video.file.renameTo(newFile)
                         videos = loadVideos(context)
                         showRenameDialog = null
-                    }) { Text("Rename") }
+                    }) { Text(stringResource(R.string.rename)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showRenameDialog = null }) { Text("Cancel") }
+                    TextButton(onClick = { showRenameDialog = null }) { Text(stringResource(R.string.cancel)) }
                 }
             )
         }
@@ -219,19 +222,19 @@ private fun VideoCard(
             }
             Row {
                 IconButton(onClick = onTrim) {
-                    Icon(Icons.Default.ContentCut, contentDescription = "Trim",
+                    Icon(Icons.Default.ContentCut, contentDescription = stringResource(R.string.cd_trim),
                         tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = onShare) {
-                    Icon(Icons.Default.Share, contentDescription = "Share",
+                    Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share),
                         tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = onRename) {
-                    Icon(Icons.Default.Edit, contentDescription = "Rename",
+                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_rename),
                         tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete",
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete),
                         tint = MaterialTheme.colorScheme.error)
                 }
             }

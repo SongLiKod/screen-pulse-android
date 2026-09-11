@@ -18,9 +18,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.screenpulse.R
 import com.screenpulse.util.LogManager
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,18 +48,18 @@ fun LogScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Logs (${logs.size})") },
+                title = { Text(stringResource(R.string.title_logs) + " (${logs.size})") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { LogManager.clear() }) {
-                        Icon(Icons.Default.ClearAll, contentDescription = "Clear")
+                        Icon(Icons.Default.ClearAll, contentDescription = stringResource(R.string.cd_clear))
                     }
                     IconButton(onClick = { shareLogs(context) }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share")
+                        Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -75,7 +77,7 @@ fun LogScreen(
                 .padding(paddingValues)
         ) {
             Text(
-                text = if (autoScroll) "Auto-scroll: ON (tap to freeze)" else "Auto-scroll: OFF (tap to resume)",
+                text = if (autoScroll) stringResource(R.string.autoscroll_on) else stringResource(R.string.autoscroll_off),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -90,7 +92,7 @@ fun LogScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "No logs yet",
+                        stringResource(R.string.no_logs),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -123,8 +125,8 @@ private fun shareLogs(context: Context) {
     val text = LogManager.exportText()
     val sendIntent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, "ScreenPulse Logs")
+        putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.share_subject))
         putExtra(Intent.EXTRA_TEXT, text)
     }
-    context.startActivity(Intent.createChooser(sendIntent, "Share logs"))
+    context.startActivity(Intent.createChooser(sendIntent, context.getString(R.string.share_logs)))
 }

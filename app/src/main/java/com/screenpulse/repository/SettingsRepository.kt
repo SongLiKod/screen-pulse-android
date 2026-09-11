@@ -41,6 +41,7 @@ class SettingsRepository(private val context: Context) {
         val CUSTOM_RESOLUTION_WIDTH = intPreferencesKey("custom_resolution_width")
         val CUSTOM_RESOLUTION_HEIGHT = intPreferencesKey("custom_resolution_height")
         val BITRATE_MODE = intPreferencesKey("bitrate_mode")
+        val LANGUAGE = stringPreferencesKey("language")
     }
 
     val themeMode: Flow<ThemeMode> = context.dataStore.data.map { prefs ->
@@ -134,6 +135,14 @@ class SettingsRepository(private val context: Context) {
 
     val bitrateMode: Flow<BitrateMode> = context.dataStore.data.map { prefs ->
         BitrateMode.fromValue(prefs[Keys.BITRATE_MODE] ?: BitrateMode.SMART.value)
+    }
+
+    val language: Flow<Language> = context.dataStore.data.map { prefs ->
+        Language.fromValue(prefs[Keys.LANGUAGE] ?: Language.SYSTEM.value)
+    }
+
+    suspend fun setLanguage(language: Language) {
+        context.dataStore.edit { it[Keys.LANGUAGE] = language.value }
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {

@@ -5,15 +5,17 @@ import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.screenpulse.R
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,7 +33,7 @@ fun VideoPreviewScreen(
                 title = { Text(file.name, maxLines = 1) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -75,11 +77,11 @@ fun VideoPreviewScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("File Info", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(stringResource(R.string.file_info), fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(modifier = Modifier.height(8.dp))
-                    InfoRow("Name", file.name)
-                    InfoRow("Size", formatFileSize(file.length()))
-                    InfoRow("Path", file.absolutePath)
+                    InfoRow(stringResource(R.string.info_name), file.name)
+                    InfoRow(stringResource(R.string.info_size), formatFileSize(file.length()))
+                    InfoRow(stringResource(R.string.info_path), file.absolutePath)
                 }
             }
         }

@@ -103,3 +103,13 @@ enum class BitrateMode(val value: Int) {
         }
     }
 }
+
+enum class Language(val value: String, val tag: String) {
+    SYSTEM("system", ""),
+    ENGLISH("en", "en"),
+    CHINESE("zh", "zh");
+
+    companion object {
+        fun fromValue(value: String): Language = entries.firstOrNull { it.value == value } ?: SYSTEM
+    }
+}

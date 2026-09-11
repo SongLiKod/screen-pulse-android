@@ -9,7 +9,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,9 +18,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.screenpulse.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,10 +65,10 @@ fun VideoTrimScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Trim Video") },
+                title = { Text(stringResource(R.string.video_trim)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -92,7 +94,7 @@ fun VideoTrimScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Video Duration", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.video_duration), fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         formatDuration(duration),
@@ -113,13 +115,13 @@ fun VideoTrimScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Trim Range", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.trim_range), fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    Text("Start: ${formatDuration((trimStart * duration).toLong())}")
-                    Text("End: ${formatDuration((trimEnd * duration).toLong())}")
+                    Text(stringResource(R.string.trim_start_label, formatDuration((trimStart * duration).toLong())))
+                    Text(stringResource(R.string.trim_end_label, formatDuration((trimEnd * duration).toLong())))
                     Text(
-                        "Duration: ${formatDuration(((trimEnd - trimStart) * duration).toLong())}",
+                        stringResource(R.string.trim_duration_label, formatDuration(((trimEnd - trimStart) * duration).toLong())),
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium
                     )
@@ -207,7 +209,7 @@ fun VideoTrimScreen(
             ) {
                 Icon(Icons.Default.ContentCut, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(if (isProcessing) "Processing..." else "Trim Video")
+                Text(if (isProcessing) stringResource(R.string.processing) else stringResource(R.string.video_trim))
             }
         }
     }

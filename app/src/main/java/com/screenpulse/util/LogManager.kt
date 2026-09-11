@@ -19,16 +19,14 @@ data class LogEntry(
 
 object LogManager {
 
-    companion object {
-        const val TAG_RECORD = "ScreenRecord"
-        const val TAG_FLOAT = "FloatingWindow"
-        const val TAG_PIP = "PipService"
-        const val TAG_ANNOTATION = "Annotation"
-        const val TAG_WATERMARK = "Watermark"
-        const val TAG_COMPRESS = "Compress"
-        const val TAG_UI = "ScreenPulse-UI"
-        const val TAG_MAIN = "ScreenPulse"
-    }
+    const val TAG_RECORD = "ScreenRecord"
+    const val TAG_FLOAT = "FloatingWindow"
+    const val TAG_PIP = "PipService"
+    const val TAG_ANNOTATION = "Annotation"
+    const val TAG_WATERMARK = "Watermark"
+    const val TAG_COMPRESS = "Compress"
+    const val TAG_UI = "ScreenPulse-UI"
+    const val TAG_MAIN = "ScreenPulse"
 
     private const val MAX_LOGS = 800
 

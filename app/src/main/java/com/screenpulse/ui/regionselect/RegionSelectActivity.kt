@@ -86,7 +86,7 @@ class RegionSelectActivity : Activity() {
         root.addView(buttonLayout, buttonParams)
 
         val hintView = TextView(this).apply {
-            text = "Drag to select recording region"
+            text = getString(R.string.region_hint)
             setTextColor(Color.WHITE)
             textSize = 16f
             gravity = android.view.Gravity.CENTER

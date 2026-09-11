@@ -21,12 +21,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.screenpulse.floatingwindow.FloatingWindowService
 import com.screenpulse.permission.PermissionManager
+import com.screenpulse.R
 import com.screenpulse.repository.AudioMode
 import com.screenpulse.repository.CountdownMode
 import com.screenpulse.repository.RecordMode
@@ -35,6 +37,7 @@ import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.viewmodel.RecordingViewModel
 import com.screenpulse.viewmodel.SettingsViewModel
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.ProjectionRequestBus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.concurrent.TimeUnit
@@ -132,16 +135,39 @@ fun HomeScreen(
         }
     }
 
+    fun requestRecording() {
+        val permissions = PermissionManager.getRequiredPermissions()
+        val needsPermission = permissions.any { perm ->
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, perm
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        LogManager.log(LogManager.TAG_UI, "Record button: needsPermission=$needsPermission overlay=${PermissionManager.hasOverlayPermission(context)}")
+        when {
+            needsPermission -> permissionLauncher.launch(permissions)
+            !PermissionManager.hasOverlayPermission(context) -> showOverlayDialog = true
+            else -> mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+        }
+    }
+
+    val projectionRequestCount by ProjectionRequestBus.requestCount.collectAsState()
+    LaunchedEffect(projectionRequestCount) {
+        if (projectionRequestCount > 0) {
+            LogManager.log(LogManager.TAG_UI, "Projection requested from floating window, launching")
+            requestRecording()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("ScreenPulse", fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.app_name), fontWeight = FontWeight.Bold) },
                 actions = {
                     IconButton(onClick = onNavigateToLogs) {
-                        Icon(Icons.Default.BugReport, contentDescription = "Logs")
+                        Icon(Icons.Default.BugReport, contentDescription = stringResource(R.string.cd_logs))
                     }
                     IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_settings))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -165,22 +191,7 @@ fun HomeScreen(
                 state = recordingState,
                 duration = duration,
                 countdown = countdown,
-                onClick = {
-                    val permissions = PermissionManager.getRequiredPermissions()
-                    val needsPermission = permissions.any { perm ->
-                        androidx.core.content.ContextCompat.checkSelfPermission(
-                            context, perm
-                        ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                    }
-                    LogManager.log(LogManager.TAG_UI, "Record button: needsPermission=$needsPermission overlay=${PermissionManager.hasOverlayPermission(context)}")
-                    if (needsPermission) {
-                        permissionLauncher.launch(permissions)
-                    } else if (!PermissionManager.hasOverlayPermission(context)) {
-                        showOverlayDialog = true
-                    } else {
-                        mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
-                    }
-                },
+                onClick = { requestRecording() },
                 onStop = {
                     context.startService(Intent(context, ScreenRecordService::class.java).apply {
                         action = ScreenRecordService.ACTION_STOP
@@ -196,13 +207,14 @@ fun HomeScreen(
 
             CurrentParamsCard(
                 resolution = resolution.value,
-                frameRate = "${frameRate.value} FPS",
+                frameRate = stringResource(R.string.fps_format, "${frameRate.value}"),
                 audioMode = when (audioMode) {
-                    AudioMode.SYSTEM_ONLY -> "System Only"
-                    AudioMode.MIC_ONLY -> "Mic Only"
-                    AudioMode.MIXED -> "System + Mic"
+                    AudioMode.SYSTEM_ONLY -> stringResource(R.string.audio_short_system)
+                    AudioMode.MIC_ONLY -> stringResource(R.string.audio_short_mic)
+                    AudioMode.MIXED -> stringResource(R.string.audio_short_mixed)
                 },
-                recordMode = if (recordMode == RecordMode.FULL_SCREEN) "Full Screen" else "Custom Region"
+                recordMode = if (recordMode == RecordMode.FULL_SCREEN) stringResource(R.string.full_screen_record)
+                else stringResource(R.string.region_record)
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -213,17 +225,18 @@ fun HomeScreen(
             ) {
                 ActionButton(
                     icon = Icons.Default.VideoLibrary,
-                    label = "Videos",
+                    label = stringResource(R.string.btn_videos),
                     onClick = onNavigateToVideoList
                 )
                 ActionButton(
                     icon = Icons.Default.Settings,
-                    label = "Settings",
+                    label = stringResource(R.string.settings),
                     onClick = onNavigateToSettings
                 )
                 ActionButton(
                     icon = if (recordingState == RecordingState.PAUSED) Icons.Default.PlayArrow else Icons.Default.Pause,
-                    label = if (recordingState == RecordingState.PAUSED) "Resume" else "Pause",
+                    label = if (recordingState == RecordingState.PAUSED) stringResource(R.string.btn_resume)
+                    else stringResource(R.string.btn_pause),
                     onClick = {
                         val action = if (recordingState == RecordingState.RECORDING) {
                             ScreenRecordService.ACTION_PAUSE
@@ -241,16 +254,16 @@ fun HomeScreen(
             if (showPermissionDialog) {
                 AlertDialog(
                     onDismissRequest = { showPermissionDialog = false },
-                    title = { Text("Permission Required") },
-                    text = { Text("Screen recording and microphone permissions are required for recording.") },
+                    title = { Text(stringResource(R.string.permission_dialog_title)) },
+                    text = { Text(stringResource(R.string.permission_dialog_text)) },
                     confirmButton = {
                         TextButton(onClick = {
                             showPermissionDialog = false
                             permissionLauncher.launch(PermissionManager.getRequiredPermissions())
-                        }) { Text("Grant") }
+                        }) { Text(stringResource(R.string.grant_permission)) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showPermissionDialog = false }) { Text("Cancel") }
+                        TextButton(onClick = { showPermissionDialog = false }) { Text(stringResource(R.string.cancel)) }
                     }
                 )
             }
@@ -258,18 +271,18 @@ fun HomeScreen(
             if (showOverlayDialog) {
                 AlertDialog(
                     onDismissRequest = { showOverlayDialog = false },
-                    title = { Text("Overlay Permission") },
-                    text = { Text("Overlay permission is required for the floating window control.") },
+                    title = { Text(stringResource(R.string.overlay_dialog_title)) },
+                    text = { Text(stringResource(R.string.overlay_dialog_text)) },
                     confirmButton = {
                         TextButton(onClick = {
                             showOverlayDialog = false
                             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                 android.net.Uri.parse("package:${context.packageName}"))
                             context.startActivity(intent)
-                        }) { Text("Grant") }
+                        }) { Text(stringResource(R.string.grant_permission)) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showOverlayDialog = false }) { Text("Cancel") }
+                        TextButton(onClick = { showOverlayDialog = false }) { Text(stringResource(R.string.cancel)) }
                     }
                 )
             }
@@ -314,13 +327,13 @@ private fun RecordButton(
                 )
                 isRecording -> Icon(
                     Icons.Default.Stop,
-                    contentDescription = "Stop",
+                    contentDescription = stringResource(R.string.cd_stop),
                     modifier = Modifier.size(48.dp),
                     tint = MaterialTheme.colorScheme.onError
                 )
                 else -> Icon(
                     Icons.Default.FiberManualRecord,
-                    contentDescription = "Start Recording",
+                    contentDescription = stringResource(R.string.cd_start_record),
                     modifier = Modifier.size(48.dp),
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
@@ -331,9 +344,9 @@ private fun RecordButton(
 
         Text(
             text = when {
-                isCountdown -> "Starting..."
+                isCountdown -> stringResource(R.string.starting)
                 isRecording -> formatDuration(duration)
-                else -> "Tap to Record"
+                else -> stringResource(R.string.tap_to_record)
             },
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
@@ -376,10 +389,10 @@ private fun StatusCard(state: RecordingState, duration: Long) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = when (state) {
-                        RecordingState.IDLE -> "Ready"
-                        RecordingState.COUNTDOWN -> "Countdown"
-                        RecordingState.RECORDING -> "Recording"
-                        RecordingState.PAUSED -> "Paused"
+                        RecordingState.IDLE -> stringResource(R.string.status_ready)
+                        RecordingState.COUNTDOWN -> stringResource(R.string.status_countdown)
+                        RecordingState.RECORDING -> stringResource(R.string.status_recording)
+                        RecordingState.PAUSED -> stringResource(R.string.status_paused)
                     },
                     fontWeight = FontWeight.Medium
                 )
@@ -411,12 +424,12 @@ private fun CurrentParamsCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Current Settings", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(stringResource(R.string.current_settings), fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(8.dp))
-            ParamRow("Resolution", resolution)
-            ParamRow("Frame Rate", frameRate)
-            ParamRow("Audio", audioMode)
-            ParamRow("Mode", recordMode)
+            ParamRow(stringResource(R.string.param_resolution), resolution)
+            ParamRow(stringResource(R.string.param_frame_rate), frameRate)
+            ParamRow(stringResource(R.string.param_audio), audioMode)
+            ParamRow(stringResource(R.string.param_mode), recordMode)
         }
     }
 }

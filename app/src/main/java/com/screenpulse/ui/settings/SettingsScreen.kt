@@ -13,17 +13,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.screenpulse.R
 import com.screenpulse.repository.*
 import com.screenpulse.viewmodel.SettingsViewModel
 import com.screenpulse.ui.regionselect.RegionSelectActivity
@@ -57,6 +59,7 @@ fun SettingsScreen(
     val customResolutionWidth by settingsViewModel.customResolutionWidth.collectAsState()
     val customResolutionHeight by settingsViewModel.customResolutionHeight.collectAsState()
     val bitrateMode by settingsViewModel.bitrateMode.collectAsState()
+    val language by settingsViewModel.language.collectAsState()
 
     var showBatteryDialog by remember { mutableStateOf(false) }
     var customWidthText by remember(customResolutionWidth) { mutableStateOf(customResolutionWidth.toString()) }
@@ -78,10 +81,10 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text(stringResource(R.string.settings)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -99,14 +102,18 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            SectionTitle("Theme")
+            SectionTitle(stringResource(R.string.section_theme))
             ThemeSelector(themeMode) { settingsViewModel.setThemeMode(it) }
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionTitle("Recording Quality")
+            SectionTitle(stringResource(R.string.section_language))
+            LanguageSelector(language) { settingsViewModel.setLanguage(it) }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            SectionTitle(stringResource(R.string.section_recording_quality))
 
             SettingsDropdown(
-                label = "Resolution",
+                label = stringResource(R.string.label_resolution),
                 value = resolution.value,
                 options = Resolution.entries.map { it.value },
                 onSelected = { settingsViewModel.setResolution(Resolution.fromValue(it)) }
@@ -122,7 +129,7 @@ fun SettingsScreen(
                     )
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Custom Resolution", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                        Text(stringResource(R.string.custom_resolution), fontWeight = FontWeight.Medium, fontSize = 14.sp)
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -135,19 +142,19 @@ fun SettingsScreen(
                                     customWidthText = it
                                     it.toIntOrNull()?.let { w -> settingsViewModel.setCustomResolutionWidth(w) }
                                 },
-                                label = { Text("Width") },
+                                label = { Text(stringResource(R.string.label_width)) },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(8.dp)
                             )
-                            Text("x", fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.multiply), fontWeight = FontWeight.Bold)
                             OutlinedTextField(
                                 value = customHeightText,
                                 onValueChange = {
                                     customHeightText = it
                                     it.toIntOrNull()?.let { h -> settingsViewModel.setCustomResolutionHeight(h) }
                                 },
-                                label = { Text("Height") },
+                                label = { Text(stringResource(R.string.label_height)) },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(8.dp)
@@ -160,11 +167,11 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             SettingsDropdown(
-                label = "Frame Rate",
-                value = "${frameRate.value} FPS",
-                options = FrameRate.entries.map { "${it.value} FPS" },
+                label = stringResource(R.string.label_frame_rate),
+                value = stringResource(R.string.fps_format, "${frameRate.value}"),
+                options = FrameRate.entries.map { stringResource(R.string.fps_format, "${it.value}") },
                 onSelected = {
-                    val fps = it.replace(" FPS", "").toInt()
+                    val fps = it.filter { c -> c.isDigit() }.toIntOrNull() ?: 30
                     settingsViewModel.setFrameRate(FrameRate.fromValue(fps))
                 }
             )
@@ -186,7 +193,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 val smartBitrate = BitrateMode.calculateSmartBitrate(resolution, frameRate)
                 Text(
-                    text = "Smart adaptive: ${smartBitrate / 1_000_000} Mbps",
+                    text = stringResource(R.string.bitrate_smart_value, smartBitrate / 1_000_000),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp)
@@ -194,7 +201,7 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionTitle("Audio")
+            SectionTitle(stringResource(R.string.section_audio))
 
             AudioModeSelector(
                 selectedMode = audioMode,
@@ -211,7 +218,7 @@ fun SettingsScreen(
                     )
                 ) {
                     Text(
-                        text = "System audio recording requires Android 10+. Only microphone recording is available on this device.",
+                        text = stringResource(R.string.system_audio_requires),
                         modifier = Modifier.padding(16.dp),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         fontSize = 13.sp
@@ -222,7 +229,7 @@ fun SettingsScreen(
             if (audioMode == AudioMode.SYSTEM_ONLY || audioMode == AudioMode.MIXED) {
                 Spacer(modifier = Modifier.height(12.dp))
                 VolumeSlider(
-                    label = "System Volume",
+                    label = stringResource(R.string.system_volume),
                     value = systemVolume,
                     onValueChanged = { settingsViewModel.setSystemVolume(it) }
                 )
@@ -231,14 +238,14 @@ fun SettingsScreen(
             if (audioMode == AudioMode.MIC_ONLY || audioMode == AudioMode.MIXED) {
                 Spacer(modifier = Modifier.height(12.dp))
                 VolumeSlider(
-                    label = "Mic Volume",
+                    label = stringResource(R.string.mic_volume),
                     value = micVolume,
                     onValueChanged = { settingsViewModel.setMicVolume(it) }
                 )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionTitle("Record Mode")
+            SectionTitle(stringResource(R.string.section_record_mode))
 
             RecordModeSelector(
                 selectedMode = recordMode,
@@ -255,12 +262,12 @@ fun SettingsScreen(
                         containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
-                    Text("Select Recording Region")
+                    Text(stringResource(R.string.btn_select_region))
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionTitle("Compression")
+            SectionTitle(stringResource(R.string.section_compression))
 
             CompressionModeSelector(
                 selectedMode = compressionMode,
@@ -268,7 +275,7 @@ fun SettingsScreen(
             )
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionTitle("Countdown")
+            SectionTitle(stringResource(R.string.section_countdown))
 
             CountdownSelector(
                 selectedMode = countdownMode,
@@ -276,7 +283,7 @@ fun SettingsScreen(
             )
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionTitle("Watermark")
+            SectionTitle(stringResource(R.string.section_watermark))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -292,7 +299,7 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Enable Watermark")
+                    Text(stringResource(R.string.enable_watermark))
                     Switch(
                         checked = watermarkEnabled,
                         onCheckedChange = { settingsViewModel.setWatermarkEnabled(it) },
@@ -332,8 +339,8 @@ fun SettingsScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = when (type) {
-                                        WatermarkType.TEXT -> "Text Watermark"
-                                        WatermarkType.IMAGE -> "Image Watermark"
+                                        WatermarkType.TEXT -> stringResource(R.string.watermark_text_type)
+                                        WatermarkType.IMAGE -> stringResource(R.string.watermark_image_type)
                                     }
                                 )
                             }
@@ -346,7 +353,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = watermarkText,
                         onValueChange = { settingsViewModel.setWatermarkText(it) },
-                        label = { Text("Watermark Text") },
+                        label = { Text(stringResource(R.string.watermark_text)) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
@@ -360,12 +367,12 @@ fun SettingsScreen(
                             containerColor = MaterialTheme.colorScheme.primary
                         )
                     ) {
-                        Text(if (watermarkImageUri.isEmpty()) "Select Image" else "Change Image")
+                        Text(if (watermarkImageUri.isEmpty()) stringResource(R.string.select_image) else stringResource(R.string.change_image))
                     }
                     if (watermarkImageUri.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Image selected",
+                            stringResource(R.string.image_selected),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -374,7 +381,7 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionTitle("Shortcut Key")
+            SectionTitle(stringResource(R.string.section_shortcut))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -384,7 +391,7 @@ fun SettingsScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Configure physical key for recording control", fontSize = 13.sp)
+                    Text(stringResource(R.string.shortcut_desc), fontSize = 13.sp)
                     Spacer(modifier = Modifier.height(8.dp))
                     var isListeningForKey by remember { mutableStateOf(false) }
                     Button(
@@ -397,8 +404,8 @@ fun SettingsScreen(
                         Icon(Icons.Default.Keyboard, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            if (shortcutKeyName.isEmpty()) "Set Key"
-                            else "Current: $shortcutKeyName"
+                            if (shortcutKeyName.isEmpty()) stringResource(R.string.set_key)
+                            else stringResource(R.string.current_key, shortcutKeyName)
                         )
                     }
                     if (isListeningForKey) {
@@ -415,7 +422,7 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            SectionTitle("Advanced")
+            SectionTitle(stringResource(R.string.section_advanced))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -432,9 +439,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("PiP Recording", fontWeight = FontWeight.Medium)
+                        Text(stringResource(R.string.pip_recording), fontWeight = FontWeight.Medium)
                         Text(
-                            "Front camera overlay during recording",
+                            stringResource(R.string.pip_recording_desc),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -460,7 +467,7 @@ fun SettingsScreen(
                     )
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("PiP Window Size: ${pipSize}dp", fontWeight = FontWeight.Medium)
+                        Text(stringResource(R.string.pip_size_format, "$pipSize"), fontWeight = FontWeight.Medium)
                         Slider(
                             value = pipSize.toFloat(),
                             onValueChange = { settingsViewModel.setPipSize(it.toInt()) },
@@ -481,18 +488,18 @@ fun SettingsScreen(
     if (showBatteryDialog) {
         AlertDialog(
             onDismissRequest = { showBatteryDialog = false },
-            title = { Text("Battery Optimization") },
-            text = { Text("For stable long-duration recording, please disable battery optimization for ScreenPulse.") },
+            title = { Text(stringResource(R.string.battery_optimization)) },
+            text = { Text(stringResource(R.string.battery_optimization_desc)) },
             confirmButton = {
                 TextButton(onClick = {
                     showBatteryDialog = false
                     val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                         android.net.Uri.parse("package:${context.packageName}"))
                     context.startActivity(intent)
-                }) { Text("Disable") }
+                }) { Text(stringResource(R.string.battery_disable)) }
             },
             dismissButton = {
-                TextButton(onClick = { showBatteryDialog = false }) { Text("Later") }
+                TextButton(onClick = { showBatteryDialog = false }) { Text(stringResource(R.string.battery_later)) }
             }
         )
     }
@@ -508,14 +515,14 @@ private fun KeyCaptureDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Press a Key") },
+        title = { Text(stringResource(R.string.press_key_title)) },
         text = {
             Column {
-                Text("Press any physical key on your device...")
+                Text(stringResource(R.string.press_key_hint))
                 if (capturedKey.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "Key: $capturedKey",
+                        stringResource(R.string.key_value, capturedKey),
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -526,10 +533,10 @@ private fun KeyCaptureDialog(
             TextButton(
                 onClick = { onKeyCaptured(capturedKeyCode, capturedKey) },
                 enabled = capturedKey.isNotEmpty()
-            ) { Text("Confirm") }
+            ) { Text(stringResource(R.string.confirm)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )
 }
@@ -573,9 +580,48 @@ private fun ThemeSelector(selected: ThemeMode, onSelected: (ThemeMode) -> Unit) 
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = when (mode) {
-                            ThemeMode.FOLLOW_SYSTEM -> "Follow System"
-                            ThemeMode.LIGHT -> "Light Mode"
-                            ThemeMode.DARK -> "Dark Mode"
+                            ThemeMode.FOLLOW_SYSTEM -> stringResource(R.string.follow_system)
+                            ThemeMode.LIGHT -> stringResource(R.string.light_mode)
+                            ThemeMode.DARK -> stringResource(R.string.dark_mode)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LanguageSelector(selected: Language, onSelected: (Language) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Language.values().sortedBy { it.ordinal }.forEach { lang ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelected(lang) }
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selected == lang,
+                        onClick = { onSelected(lang) },
+                        colors = RadioButtonDefaults.colors(
+                            selectedColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = when (lang) {
+                            Language.SYSTEM -> stringResource(R.string.language_follow_system)
+                            Language.ENGLISH -> stringResource(R.string.language_english)
+                            Language.CHINESE -> stringResource(R.string.language_chinese)
                         }
                     )
                 }
@@ -586,7 +632,6 @@ private fun ThemeSelector(selected: ThemeMode, onSelected: (ThemeMode) -> Unit) 
 
 @Composable
 private fun AudioModeSelector(selectedMode: AudioMode, onModeSelected: (AudioMode) -> Unit) {
-    val context = LocalContext.current
     val availableModes = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
         listOf(AudioMode.MIC_ONLY)
     } else {
@@ -620,17 +665,17 @@ private fun AudioModeSelector(selectedMode: AudioMode, onModeSelected: (AudioMod
                     Column {
                         Text(
                             text = when (mode) {
-                                AudioMode.SYSTEM_ONLY -> "System Sound Only"
-                                AudioMode.MIC_ONLY -> "Microphone Only"
-                                AudioMode.MIXED -> "System + Microphone"
+                                AudioMode.SYSTEM_ONLY -> stringResource(R.string.audio_system_only)
+                                AudioMode.MIC_ONLY -> stringResource(R.string.audio_mic_only)
+                                AudioMode.MIXED -> stringResource(R.string.audio_mixed)
                             },
                             fontWeight = FontWeight.Medium
                         )
                         Text(
                             text = when (mode) {
-                                AudioMode.SYSTEM_ONLY -> "Record internal audio only"
-                                AudioMode.MIC_ONLY -> "Record external audio only"
-                                AudioMode.MIXED -> "Record both audio sources"
+                                AudioMode.SYSTEM_ONLY -> stringResource(R.string.audio_system_only_desc)
+                                AudioMode.MIC_ONLY -> stringResource(R.string.audio_mic_only_desc)
+                                AudioMode.MIXED -> stringResource(R.string.audio_mixed_desc)
                             },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -670,8 +715,8 @@ private fun RecordModeSelector(selectedMode: RecordMode, onModeSelected: (Record
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = when (mode) {
-                            RecordMode.FULL_SCREEN -> "Full Screen"
-                            RecordMode.CUSTOM_REGION -> "Custom Region"
+                            RecordMode.FULL_SCREEN -> stringResource(R.string.full_screen_record)
+                            RecordMode.CUSTOM_REGION -> stringResource(R.string.region_record)
                         }
                     )
                 }
@@ -709,17 +754,17 @@ private fun CompressionModeSelector(selectedMode: CompressionMode, onModeSelecte
                     Column {
                         Text(
                             text = when (mode) {
-                                CompressionMode.FAST -> "Fast Compress"
-                                CompressionMode.BALANCED -> "Balanced"
-                                CompressionMode.HD_LOSSLESS -> "HD Lossless"
+                                CompressionMode.FAST -> stringResource(R.string.compress_fast)
+                                CompressionMode.BALANCED -> stringResource(R.string.compress_balanced)
+                                CompressionMode.HD_LOSSLESS -> stringResource(R.string.compress_hd)
                             },
                             fontWeight = FontWeight.Medium
                         )
                         Text(
                             text = when (mode) {
-                                CompressionMode.FAST -> "Smallest file size"
-                                CompressionMode.BALANCED -> "Balance quality and size"
-                                CompressionMode.HD_LOSSLESS -> "Best quality"
+                                CompressionMode.FAST -> stringResource(R.string.compress_fast_desc)
+                                CompressionMode.BALANCED -> stringResource(R.string.compress_balanced_desc)
+                                CompressionMode.HD_LOSSLESS -> stringResource(R.string.compress_hd_desc)
                             },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -759,9 +804,9 @@ private fun CountdownSelector(selectedMode: CountdownMode, onModeSelected: (Coun
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = when (mode) {
-                            CountdownMode.NONE -> "None"
-                            CountdownMode.THREE_SECONDS -> "3 seconds"
-                            CountdownMode.FIVE_SECONDS -> "5 seconds"
+                            CountdownMode.NONE -> stringResource(R.string.countdown_none)
+                            CountdownMode.THREE_SECONDS -> stringResource(R.string.countdown_3s)
+                            CountdownMode.FIVE_SECONDS -> stringResource(R.string.countdown_5s)
                         }
                     )
                 }
@@ -780,7 +825,7 @@ private fun BitrateModeSelector(selectedMode: BitrateMode, onModeSelected: (Bitr
         )
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
-            Text("Bitrate Mode", fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 8.dp, top = 4.dp))
+            Text(stringResource(R.string.bitrate_mode_select), fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 8.dp, top = 4.dp))
             BitrateMode.entries.forEach { mode ->
                 Row(
                     modifier = Modifier
@@ -800,15 +845,15 @@ private fun BitrateModeSelector(selectedMode: BitrateMode, onModeSelected: (Bitr
                     Column {
                         Text(
                             text = when (mode) {
-                                BitrateMode.SMART -> "Smart Adaptive"
-                                BitrateMode.MANUAL -> "Manual"
+                                BitrateMode.SMART -> stringResource(R.string.bitrate_smart)
+                                BitrateMode.MANUAL -> stringResource(R.string.bitrate_manual)
                             },
                             fontWeight = FontWeight.Medium
                         )
                         Text(
                             text = when (mode) {
-                                BitrateMode.SMART -> "Auto-adjust based on resolution and frame rate"
-                                BitrateMode.MANUAL -> "Set bitrate manually"
+                                BitrateMode.SMART -> stringResource(R.string.bitrate_smart_desc)
+                                BitrateMode.MANUAL -> stringResource(R.string.bitrate_manual_desc)
                             },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -836,8 +881,8 @@ private fun BitrateSlider(bitrate: Int, onBitrateChanged: (Int) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Bitrate", fontWeight = FontWeight.Medium)
-                Text("${sliderValue.toInt()} Mbps", color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.label_bitrate), fontWeight = FontWeight.Medium)
+                Text(stringResource(R.string.bitrate_mbps, sliderValue.toInt()), color = MaterialTheme.colorScheme.primary)
             }
             Slider(
                 value = sliderValue,
@@ -873,7 +918,7 @@ private fun VolumeSlider(label: String, value: Int, onValueChanged: (Int) -> Uni
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(label, fontWeight = FontWeight.Medium)
-                Text("${sliderValue.toInt()}%", color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.percent_format, sliderValue.toInt()), color = MaterialTheme.colorScheme.primary)
             }
             Slider(
                 value = sliderValue,
