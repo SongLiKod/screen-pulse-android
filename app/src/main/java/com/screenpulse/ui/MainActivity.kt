@@ -87,14 +87,7 @@ class MainActivity : AppCompatActivity() {
                         composable(Screen.Settings.route) {
                             SettingsScreen(
                                 settingsViewModel = settingsViewModel,
-                                onBack = { navController.popBackStack() },
-                                onNavigateToRegionSelect = {
-                                    val intent = android.content.Intent(
-                                        this@MainActivity,
-                                        com.screenpulse.ui.regionselect.RegionSelectActivity::class.java
-                                    )
-                                    startActivity(intent)
-                                }
+                                onBack = { navController.popBackStack() }
                             )
                         }
                         composable(Screen.VideoList.route) {

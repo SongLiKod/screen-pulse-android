@@ -302,6 +302,18 @@ class ScreenRecordService : Service() {
                 startService(watermarkIntent)
                 LogManager.log(LogManager.TAG_RECORD, "Watermark enabled: $watermarkText")
             }
+
+            if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) {
+                val regionIntent = Intent(this, com.screenpulse.floatingwindow.FloatingRegionService::class.java).apply {
+                    action = com.screenpulse.floatingwindow.FloatingRegionService.ACTION_SHOW
+                    putExtra(com.screenpulse.floatingwindow.FloatingRegionService.EXTRA_X, customOffsetX)
+                    putExtra(com.screenpulse.floatingwindow.FloatingRegionService.EXTRA_Y, customOffsetY)
+                    putExtra(com.screenpulse.floatingwindow.FloatingRegionService.EXTRA_WIDTH, customWidth)
+                    putExtra(com.screenpulse.floatingwindow.FloatingRegionService.EXTRA_HEIGHT, customHeight)
+                }
+                startService(regionIntent)
+                LogManager.log(LogManager.TAG_RECORD, "Region overlay started: $customOffsetX,$customOffsetY ${customWidth}x$customHeight")
+            }
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_RECORD, "Recording setup FAILED", e)
             e.printStackTrace()
@@ -678,6 +690,14 @@ class ScreenRecordService : Service() {
             drainAudioEncoder()
         } catch (_: Exception) {}
 
+        try {
+            if (!muxerStarted && videoTrackIndex != -1) {
+                mediaMuxer?.start()
+                muxerStarted = true
+                LogManager.log(LogManager.TAG_RECORD, "handleStop: force start muxer (video-only)")
+            }
+        } catch (_: Exception) {}
+
         cleanup()
 
         finalizeOutput()
@@ -697,6 +717,7 @@ class ScreenRecordService : Service() {
         stopService(Intent(this, com.screenpulse.floatingwindow.FloatingAnnotationService::class.java))
         stopService(Intent(this, com.screenpulse.floatingwindow.FloatingPipService::class.java))
         stopService(Intent(this, com.screenpulse.floatingwindow.FloatingWatermarkService::class.java))
+        stopService(Intent(this, com.screenpulse.floatingwindow.FloatingRegionService::class.java))
         stopService(Intent(this, com.screenpulse.floatingwindow.FloatingWindowService::class.java))
 
         stopForeground(STOP_FOREGROUND_REMOVE)

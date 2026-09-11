@@ -31,8 +31,10 @@ import com.screenpulse.permission.PermissionManager
 import com.screenpulse.R
 import com.screenpulse.repository.AudioMode
 import com.screenpulse.repository.CountdownMode
+import com.screenpulse.repository.CustomRegion
 import com.screenpulse.repository.RecordMode
 import com.screenpulse.service.ScreenRecordService
+import com.screenpulse.ui.regionselect.RegionSelectActivity
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.viewmodel.RecordingViewModel
 import com.screenpulse.viewmodel.SettingsViewModel
@@ -83,8 +85,30 @@ fun HomeScreen(
         }
     }
 
+    val customRegionData by settingsViewModel.customRegion.collectAsState()
+
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showOverlayDialog by remember { mutableStateOf(false) }
+
+    val regionSelectLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        LogManager.log(LogManager.TAG_UI, "Region select result: code=${result.resultCode} data=${result.data != null}")
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val d = result.data!!
+            val region = CustomRegion(
+                width = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_WIDTH, 0),
+                height = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_HEIGHT, 0),
+                offsetX = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_X, 0),
+                offsetY = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)
+            )
+            settingsViewModel.setCustomRegion(region)
+            LogManager.log(LogManager.TAG_UI, "Region selected: ${region.offsetX},${region.offsetY} ${region.width}x${region.height} -> asking MediaProjection")
+            mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+        } else {
+            LogManager.log(LogManager.TAG_UI, "Region selection cancelled by user")
+        }
+    }
 
     val mediaProjectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -109,6 +133,10 @@ fun HomeScreen(
                 watermarkText = watermarkText,
                 customResolutionWidth = customResolutionWidth,
                 customResolutionHeight = customResolutionHeight,
+                regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
+                regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
+                regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
+                regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
                 customSaveTreeUri = customSaveTreeUri,
                 settingsViewModel = settingsViewModel
             )
@@ -125,15 +153,27 @@ fun HomeScreen(
         val allGranted = permissions.values.all { it }
         LogManager.log(LogManager.TAG_UI, "Permission result: allGranted=$allGranted perms=$permissions")
         if (allGranted) {
-            if (!PermissionManager.hasOverlayPermission(context)) {
+            continueToRecordingStart()
+        } else {
+            showPermissionDialog = true
+        }
+    }
+
+    fun continueToRecordingStart() {
+        LogManager.log(LogManager.TAG_UI, "continueToRecordingStart overlay=${PermissionManager.hasOverlayPermission(context)} mode=$recordMode")
+        when {
+            !PermissionManager.hasOverlayPermission(context) -> {
                 LogManager.log(LogManager.TAG_UI, "Overlay permission missing, show dialog")
                 showOverlayDialog = true
-            } else {
+            }
+            recordMode == RecordMode.CUSTOM_REGION -> {
+                LogManager.log(LogManager.TAG_UI, "Custom region mode: open region selector")
+                regionSelectLauncher.launch(Intent(context, RegionSelectActivity::class.java))
+            }
+            else -> {
                 LogManager.log(LogManager.TAG_UI, "Launching MediaProjection permission")
                 mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
             }
-        } else {
-            showPermissionDialog = true
         }
     }
 
@@ -145,10 +185,10 @@ fun HomeScreen(
             ) != android.content.pm.PackageManager.PERMISSION_GRANTED
         }
         LogManager.log(LogManager.TAG_UI, "Record button: needsPermission=$needsPermission overlay=${PermissionManager.hasOverlayPermission(context)}")
-        when {
-            needsPermission -> permissionLauncher.launch(permissions)
-            !PermissionManager.hasOverlayPermission(context) -> showOverlayDialog = true
-            else -> mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+        if (needsPermission) {
+            permissionLauncher.launch(permissions)
+        } else {
+            continueToRecordingStart()
         }
     }
 
@@ -513,6 +553,10 @@ private fun startRecording(
     watermarkText: String,
     customResolutionWidth: Int,
     customResolutionHeight: Int,
+    regionWidth: Int,
+    regionHeight: Int,
+    regionOffsetX: Int,
+    regionOffsetY: Int,
     customSaveTreeUri: String,
     settingsViewModel: SettingsViewModel
 ) {
@@ -538,6 +582,10 @@ private fun startRecording(
         putExtra(ScreenRecordService.EXTRA_WATERMARK_TEXT, watermarkText)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_WIDTH, customResolutionWidth)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_HEIGHT, customResolutionHeight)
+        putExtra(ScreenRecordService.EXTRA_CUSTOM_WIDTH, regionWidth)
+        putExtra(ScreenRecordService.EXTRA_CUSTOM_HEIGHT, regionHeight)
+        putExtra(ScreenRecordService.EXTRA_CUSTOM_OFFSET_X, regionOffsetX)
+        putExtra(ScreenRecordService.EXTRA_CUSTOM_OFFSET_Y, regionOffsetY)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_SAVE_TREE_URI, customSaveTreeUri)
     }
     context.startService(intent)

@@ -36,8 +36,7 @@ import java.io.File
 @Composable
 fun SettingsScreen(
     settingsViewModel: SettingsViewModel,
-    onBack: () -> Unit,
-    onNavigateToRegionSelect: () -> Unit
+    onBack: () -> Unit
 ) {
     val context = LocalContext.current
     val themeMode by settingsViewModel.themeMode.collectAsState()
@@ -72,6 +71,23 @@ fun SettingsScreen(
         ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let { settingsViewModel.setWatermarkImageUri(it.toString()) }
+    }
+
+    val regionSelectLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
+            val data = result.data!!
+            settingsViewModel.setCustomRegion(
+                CustomRegion(
+                    width = data.getIntExtra(RegionSelectActivity.EXTRA_REGION_WIDTH, 0),
+                    height = data.getIntExtra(RegionSelectActivity.EXTRA_REGION_HEIGHT, 0),
+                    offsetX = data.getIntExtra(RegionSelectActivity.EXTRA_REGION_X, 0),
+                    offsetY = data.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)
+                )
+            )
+            LogManager.log(LogManager.TAG_UI, "Region selected from settings: ${data.getIntExtra(RegionSelectActivity.EXTRA_REGION_X, 0)}x${data.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)}")
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -266,7 +282,7 @@ fun SettingsScreen(
             if (recordMode == RecordMode.CUSTOM_REGION) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
-                    onClick = onNavigateToRegionSelect,
+                    onClick = { regionSelectLauncher.launch(Intent(context, RegionSelectActivity::class.java)) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
