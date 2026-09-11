@@ -26,6 +26,8 @@ class FloatingWindowService : Service() {
         const val EXTRA_STATE = "state"
         const val ACTION_UPDATE_DURATION = "com.screenpulse.floating.ACTION_UPDATE_DURATION"
         const val EXTRA_DURATION_MS = "duration_ms"
+        const val ACTION_UPDATE_COUNTDOWN = "com.screenpulse.floating.ACTION_UPDATE_COUNTDOWN"
+        const val EXTRA_COUNTDOWN_REMAINING = "countdown_remaining"
         const val ACTION_HIDE = "com.screenpulse.floating.ACTION_HIDE"
         const val ACTION_SHOW = "com.screenpulse.floating.ACTION_SHOW"
     }
@@ -54,6 +56,10 @@ class FloatingWindowService : Service() {
             ACTION_UPDATE_DURATION -> {
                 val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
                 updateDuration(durationMs)
+            }
+            ACTION_UPDATE_COUNTDOWN -> {
+                val remaining = intent.getIntExtra(EXTRA_COUNTDOWN_REMAINING, 0)
+                updateCountdown(remaining)
             }
             ACTION_SHOW -> {
                 LogManager.log(LogManager.TAG_FLOAT, "show floating window")
@@ -220,6 +226,16 @@ class FloatingWindowService : Service() {
         }
     }
 
+    private fun updateCountdown(remaining: Int) {
+        val durationView = floatingView?.findViewById<android.widget.TextView>(R.id.floating_duration) ?: return
+        if (currentState == RecordingState.COUNTDOWN && remaining > 0) {
+            durationView.text = remaining.toString()
+            durationView.visibility = View.VISIBLE
+        } else if (currentState != RecordingState.RECORDING && currentState != RecordingState.PAUSED) {
+            durationView.visibility = View.GONE
+        }
+    }
+
     private fun updateFloatingIcon() {
         val pauseBtn = floatingView?.findViewById<ImageView>(R.id.floating_pause_btn)
 
@@ -233,7 +249,7 @@ class FloatingWindowService : Service() {
 
         val durationView = floatingView?.findViewById<android.widget.TextView>(R.id.floating_duration)
         val isRecording = currentState == RecordingState.RECORDING || currentState == RecordingState.PAUSED
-        if (!isRecording) {
+        if (!isRecording && currentState != RecordingState.COUNTDOWN) {
             durationView?.visibility = View.GONE
         }
 
@@ -246,6 +262,11 @@ class FloatingWindowService : Service() {
             annotationBtn?.visibility = View.VISIBLE
             stopBtn?.visibility = View.VISIBLE
             hideBtn?.visibility = View.VISIBLE
+        } else if (currentState == RecordingState.COUNTDOWN) {
+            screenshotBtn?.visibility = View.GONE
+            annotationBtn?.visibility = View.GONE
+            stopBtn?.visibility = View.VISIBLE
+            hideBtn?.visibility = View.GONE
         } else {
             screenshotBtn?.visibility = View.GONE
             annotationBtn?.visibility = View.GONE

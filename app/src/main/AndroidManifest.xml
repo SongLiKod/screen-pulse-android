@@ -38,8 +38,7 @@
 
         <activity
             android:name=".ui.regionselect.RegionSelectActivity"
-            android:exported="false"
-            android:theme="@style/Theme.ScreenPulse" />
+            android:theme="@style/Theme.ScreenPulse.Transparent" />
 
         <service
             android:name=".service.ScreenRecordService"

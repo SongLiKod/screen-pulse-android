@@ -33,6 +33,7 @@ import com.screenpulse.repository.AudioMode
 import com.screenpulse.repository.CountdownMode
 import com.screenpulse.repository.CustomRegion
 import com.screenpulse.repository.RecordMode
+import com.screenpulse.repository.WatermarkType
 import com.screenpulse.service.ScreenRecordService
 import com.screenpulse.ui.regionselect.RegionSelectActivity
 import com.screenpulse.viewmodel.RecordingState
@@ -69,6 +70,8 @@ fun HomeScreen(
     val micVolume by settingsViewModel.micVolume.collectAsState()
     val watermarkEnabled by settingsViewModel.watermarkEnabled.collectAsState()
     val watermarkText by settingsViewModel.watermarkText.collectAsState()
+    val watermarkType by settingsViewModel.watermarkType.collectAsState()
+    val watermarkImageUri by settingsViewModel.watermarkImageUri.collectAsState()
     val pipEnabled by settingsViewModel.pipEnabled.collectAsState()
     val pipSize by settingsViewModel.pipSize.collectAsState()
     val bitrateMode by settingsViewModel.bitrateMode.collectAsState()
@@ -107,41 +110,53 @@ fun HomeScreen(
 
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showOverlayDialog by remember { mutableStateOf(false) }
+    var isScreenshotMode by remember { mutableStateOf(false) }
 
     val mediaProjectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         LogManager.log(LogManager.TAG_UI, "MediaProjection result: code=${result.resultCode} data=${result.data != null}")
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            startRecording(
-                context = context,
-                resultCode = result.resultCode,
-                resultData = result.data!!,
-                audioMode = audioMode,
-                recordMode = recordMode,
-                countdownMode = countdownMode,
-                customCountdownSeconds = customCountdownSeconds,
-                resolution = resolution,
-                frameRate = frameRate,
-                bitrate = bitrate,
-                bitrateMode = bitrateMode,
-                compressionMode = compressionMode,
-                systemVolume = systemVolume,
-                micVolume = micVolume,
-                watermarkEnabled = watermarkEnabled,
-                watermarkText = watermarkText,
-                customResolutionWidth = customResolutionWidth,
-                customResolutionHeight = customResolutionHeight,
-                regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
-                regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
-                regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
-                regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
-                customSaveTreeUri = customSaveTreeUri,
-                settingsViewModel = settingsViewModel
-            )
-            startFloatingWindow(context)
-            if (pipEnabled) {
-                startPipOverlay(context, pipSize)
+            if (isScreenshotMode) {
+                isScreenshotMode = false
+                context.startService(Intent(context, ScreenRecordService::class.java).apply {
+                    action = ScreenRecordService.ACTION_SCREENSHOT_ONLY
+                    putExtra(ScreenRecordService.EXTRA_RESULT_CODE, result.resultCode)
+                    putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data!!)
+                })
+            } else {
+                startRecording(
+                    context = context,
+                    resultCode = result.resultCode,
+                    resultData = result.data!!,
+                    audioMode = audioMode,
+                    recordMode = recordMode,
+                    countdownMode = countdownMode,
+                    customCountdownSeconds = customCountdownSeconds,
+                    resolution = resolution,
+                    frameRate = frameRate,
+                    bitrate = bitrate,
+                    bitrateMode = bitrateMode,
+                    compressionMode = compressionMode,
+                    systemVolume = systemVolume,
+                    micVolume = micVolume,
+                    watermarkEnabled = watermarkEnabled,
+                    watermarkText = watermarkText,
+                    watermarkType = watermarkType,
+                    watermarkImageUri = watermarkImageUri,
+                    customResolutionWidth = customResolutionWidth,
+                    customResolutionHeight = customResolutionHeight,
+                    regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
+                    regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
+                    regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
+                    regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
+                    customSaveTreeUri = customSaveTreeUri,
+                    settingsViewModel = settingsViewModel
+                )
+                startFloatingWindow(context)
+                if (pipEnabled) {
+                    startPipOverlay(context, pipSize)
+                }
             }
         }
     }
@@ -308,11 +323,17 @@ fun HomeScreen(
                     icon = Icons.Default.CameraAlt,
                     label = stringResource(R.string.screenshot),
                     onClick = {
-                        context.startService(Intent(context, ScreenRecordService::class.java).apply {
-                            action = ScreenRecordService.ACTION_SCREENSHOT
-                        })
+                        if (recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED) {
+                            context.startService(Intent(context, ScreenRecordService::class.java).apply {
+                                action = ScreenRecordService.ACTION_SCREENSHOT
+                            })
+                        } else {
+                            isScreenshotMode = true
+                            val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+                            mediaProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+                        }
                     },
-                    enabled = recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED
+                    enabled = true
                 )
             }
 
@@ -629,6 +650,8 @@ private fun startRecording(
     micVolume: Int,
     watermarkEnabled: Boolean,
     watermarkText: String,
+    watermarkType: WatermarkType,
+    watermarkImageUri: String,
     customResolutionWidth: Int,
     customResolutionHeight: Int,
     customCountdownSeconds: Int,
@@ -660,6 +683,8 @@ private fun startRecording(
         putExtra(ScreenRecordService.EXTRA_MIC_VOLUME, micVolume)
         putExtra(ScreenRecordService.EXTRA_WATERMARK_ENABLED, watermarkEnabled)
         putExtra(ScreenRecordService.EXTRA_WATERMARK_TEXT, watermarkText)
+        putExtra(ScreenRecordService.EXTRA_WATERMARK_TYPE, watermarkType.value)
+        putExtra(ScreenRecordService.EXTRA_WATERMARK_IMAGE_URI, watermarkImageUri)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_WIDTH, customResolutionWidth)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_HEIGHT, customResolutionHeight)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_WIDTH, regionWidth)
