@@ -98,8 +98,9 @@ class ScreenRecordService : Service() {
     private var micAudioRecord: AudioRecord? = null
     private var systemAudioRecord: AudioRecord? = null
     private var mediaMuxer: MediaMuxer? = null
-    private var isRecording = false
-    private var isPaused = false
+    @Volatile private var isRecording = false
+    @Volatile private var isPaused = false
+    @Volatile private var isStopping = false
     private var recordingStartTime = 0L
     private var pausedDuration = 0L
     private var totalPausedDuration = 0L
@@ -112,6 +113,7 @@ class ScreenRecordService : Service() {
     private var audioBufferInfo = MediaCodec.BufferInfo()
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var countdownJob: Job? = null
     private var durationJob: Job? = null
     private var encodeJob: Job? = null
     private var audioEncodeJob: Job? = null
@@ -208,7 +210,8 @@ class ScreenRecordService : Service() {
     }
 
     private fun startCountdown(seconds: Int, resultCode: Int, resultData: Intent?) {
-        serviceScope.launch {
+        countdownJob?.cancel()
+        countdownJob = serviceScope.launch {
             for (i in seconds downTo 1) {
                 RecordingStateManager.updateCountdown(i)
                 stateCallback?.onCountdownTick(i)
@@ -277,6 +280,13 @@ class ScreenRecordService : Service() {
                 if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
             } audioMode=${currentAudioMode} recordMode=${currentRecordMode} out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
 
+        // Guard against double-start: if already recording or stopping, bail out
+        if (isRecording || isStopping) {
+            LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal skipped: isRecording=$isRecording isStopping=$isStopping")
+            RecordingStateManager.updateState(RecordingState.IDLE)
+            return
+        }
+
         try {
             NativeBridge.nativeInit()
 
@@ -287,6 +297,7 @@ class ScreenRecordService : Service() {
             // Set isRecording BEFORE starting encode loops so the while-loop condition passes.
             isRecording = true
             isPaused = false
+            isStopping = false
             recordingStartTime = System.currentTimeMillis()
             totalPausedDuration = 0L
 
@@ -737,7 +748,7 @@ class ScreenRecordService : Service() {
     }
 
     private fun handlePause() {
-        if (!isRecording || isPaused) return
+        if (!isRecording || isPaused || isStopping) return
         LogManager.log(LogManager.TAG_RECORD, "PAUSE requested")
         isPaused = true
         pausedDuration = System.currentTimeMillis()
@@ -753,7 +764,7 @@ class ScreenRecordService : Service() {
     }
 
     private fun handleResume() {
-        if (!isRecording || !isPaused) return
+        if (!isRecording || !isPaused || isStopping) return
         LogManager.log(LogManager.TAG_RECORD, "RESUME requested")
         isPaused = false
         totalPausedDuration += System.currentTimeMillis() - pausedDuration
@@ -768,73 +779,102 @@ class ScreenRecordService : Service() {
     }
 
     private fun handleStop() {
+        if (isStopping) return
+        isStopping = true
         LogManager.log(LogManager.TAG_RECORD, "STOP requested")
         isRecording = false
         isPaused = false
+        countdownJob?.cancel()
+        countdownJob = null
         durationJob?.cancel()
         encodeJob?.cancel()
         audioEncodeJob?.cancel()
 
-        try {
-            mediaCodec?.signalEndOfInputStream()
-        } catch (e: Exception) {
-            LogManager.log(LogManager.TAG_RECORD, "signalEndOfInputStream failed", e)
-        }
+        // Move drain + cleanup + finalize off the main thread to avoid blocking it
+        // for up to 2 seconds and to prevent race conditions with encode-loop coroutines
+        // (both sharing videoBufferInfo / audioBufferInfo on different threads).
+        serviceScope.launch(Dispatchers.IO) {
+            // Wait for coroutine encode loops to exit gracefully after cancellation
+            delay(50)
 
-        // Thorough drain: keep draining until EOS or timeout (up to 2 seconds)
-        val drainDeadline = System.currentTimeMillis() + 2000
-        var videoEosReceived = false
-        var audioEosReceived = false
-        try {
-            while (System.currentTimeMillis() < drainDeadline && (!videoEosReceived || !audioEosReceived)) {
-                if (!videoEosReceived) {
-                    videoEosReceived = drainVideoEncoderOnce()
-                }
-                if (!audioEosReceived) {
-                    audioEosReceived = drainAudioEncoderOnce()
-                }
-                if (!videoEosReceived || !audioEosReceived) {
-                    Thread.sleep(10)
-                }
+            try {
+                mediaCodec?.signalEndOfInputStream()
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "signalEndOfInputStream failed", e)
             }
-        } catch (_: Exception) {}
 
-        LogManager.log(LogManager.TAG_RECORD, "Final drain done. videoEos=$videoEosReceived audioEos=$audioEosReceived videoTrack=$videoTrackIndex audioTrack=$audioTrackIndex muxerStarted=$muxerStarted")
-
-        try {
-            if (!muxerStarted && videoTrackIndex != -1) {
-                mediaMuxer?.start()
-                muxerStarted = true
-                LogManager.log(LogManager.TAG_RECORD, "handleStop: force start muxer (video-only)")
+            // Signal EOS to audio codec so it flushes remaining data
+            try {
+                val aCodec = audioCodec
+                if (aCodec != null) {
+                    val inputIndex = aCodec.dequeueInputBuffer(10000)
+                    if (inputIndex >= 0) {
+                        aCodec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                    }
+                }
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "audio EOS signal failed", e)
             }
-        } catch (e: Exception) {
-            LogManager.log(LogManager.TAG_RECORD, "force start muxer failed", e)
+
+            // Thorough drain: keep draining until EOS or timeout (up to 2 seconds)
+            val drainDeadline = System.currentTimeMillis() + 2000
+            var videoEosReceived = false
+            var audioEosReceived = false
+            try {
+                while (System.currentTimeMillis() < drainDeadline && (!videoEosReceived || !audioEosReceived)) {
+                    if (!videoEosReceived) {
+                        videoEosReceived = drainVideoEncoderOnce()
+                    }
+                    if (!audioEosReceived) {
+                        audioEosReceived = drainAudioEncoderOnce()
+                    }
+                    if (!videoEosReceived || !audioEosReceived) {
+                        delay(10)
+                    }
+                }
+            } catch (_: Exception) {}
+
+            LogManager.log(LogManager.TAG_RECORD, "Final drain done. videoEos=$videoEosReceived audioEos=$audioEosReceived videoTrack=$videoTrackIndex audioTrack=$audioTrackIndex muxerStarted=$muxerStarted")
+
+            try {
+                if (!muxerStarted && videoTrackIndex != -1) {
+                    mediaMuxer?.start()
+                    muxerStarted = true
+                    LogManager.log(LogManager.TAG_RECORD, "handleStop: force start muxer (video-only)")
+                }
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "force start muxer failed", e)
+            }
+
+            cleanup()
+
+            // Capture file path before finalizeOutput may null-out outputFile
+            val savedFile = outputFile
+            finalizeOutput()
+
+            // Post UI/state updates back to main thread
+            withContext(Dispatchers.Main) {
+                RecordingStateManager.updateDuration(0L)
+                RecordingStateManager.updateState(RecordingState.IDLE)
+                syncFloatingWindow(RecordingState.IDLE)
+                stateCallback?.onStateChanged(RecordingState.IDLE)
+                stateCallback?.onRecordingComplete(savedFile?.absolutePath)
+                LogManager.log(LogManager.TAG_RECORD, "Recording stopped. saved=${savedFile != null && savedFile.exists()} size=${savedFile?.length()?.let { it / 1024 } ?: 0}KB path=${savedFile?.path}")
+
+                if (customSaveTreeUri.isEmpty() && savedFile != null && savedFile.exists()) {
+                    triggerCompression(savedFile.absolutePath)
+                }
+
+                stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingAnnotationService::class.java))
+                stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingPipService::class.java))
+                stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingWatermarkService::class.java))
+                stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingRegionService::class.java))
+                stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingWindowService::class.java))
+
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
-
-        cleanup()
-
-        finalizeOutput()
-
-        val savedFile = outputFile
-        RecordingStateManager.updateDuration(0L)
-        RecordingStateManager.updateState(RecordingState.IDLE)
-        syncFloatingWindow(RecordingState.IDLE)
-        stateCallback?.onStateChanged(RecordingState.IDLE)
-        stateCallback?.onRecordingComplete(savedFile?.absolutePath)
-        LogManager.log(LogManager.TAG_RECORD, "Recording stopped. saved=${savedFile != null && savedFile.exists()} size=${savedFile?.length()?.let { it / 1024 } ?: 0}KB path=${savedFile?.path}")
-
-        if (customSaveTreeUri.isEmpty() && savedFile != null && savedFile.exists()) {
-            triggerCompression(savedFile.absolutePath)
-        }
-
-        stopService(Intent(this, com.screenpulse.floatingwindow.FloatingAnnotationService::class.java))
-        stopService(Intent(this, com.screenpulse.floatingwindow.FloatingPipService::class.java))
-        stopService(Intent(this, com.screenpulse.floatingwindow.FloatingWatermarkService::class.java))
-        stopService(Intent(this, com.screenpulse.floatingwindow.FloatingRegionService::class.java))
-        stopService(Intent(this, com.screenpulse.floatingwindow.FloatingWindowService::class.java))
-
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     private fun triggerCompression(inputPath: String) {
@@ -1084,7 +1124,13 @@ class ScreenRecordService : Service() {
     }
 
     override fun onDestroy() {
-        cleanup()
+        countdownJob?.cancel()
+        if (!isStopping) {
+            isStopping = true
+            isRecording = false
+            isPaused = false
+            cleanup()
+        }
         serviceScope.cancel()
         super.onDestroy()
     }
