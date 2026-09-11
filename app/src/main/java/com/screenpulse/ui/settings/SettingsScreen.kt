@@ -306,7 +306,9 @@ fun SettingsScreen(
 
             CountdownSelector(
                 selectedMode = countdownMode,
-                onModeSelected = { settingsViewModel.setCountdownMode(it) }
+                onModeSelected = { settingsViewModel.setCountdownMode(it) },
+                customSeconds = customCountdownSeconds,
+                onCustomSecondsChanged = { settingsViewModel.setCustomCountdownSeconds(it) }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -911,7 +913,12 @@ private fun CompressionModeSelector(selectedMode: CompressionMode, onModeSelecte
 }
 
 @Composable
-private fun CountdownSelector(selectedMode: CountdownMode, onModeSelected: (CountdownMode) -> Unit) {
+private fun CountdownSelector(
+    selectedMode: CountdownMode,
+    onModeSelected: (CountdownMode) -> Unit,
+    customSeconds: Int,
+    onCustomSecondsChanged: (Int) -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -941,8 +948,30 @@ private fun CountdownSelector(selectedMode: CountdownMode, onModeSelected: (Coun
                             CountdownMode.NONE -> stringResource(R.string.countdown_none)
                             CountdownMode.THREE_SECONDS -> stringResource(R.string.countdown_3s)
                             CountdownMode.FIVE_SECONDS -> stringResource(R.string.countdown_5s)
+                            CountdownMode.CUSTOM -> stringResource(R.string.countdown_custom)
                         }
                     )
+                }
+                if (mode == CountdownMode.CUSTOM && selectedMode == CountdownMode.CUSTOM) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 48.dp, end = 12.dp, bottom = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = customSeconds.toString(),
+                            onValueChange = { text ->
+                                text.toIntOrNull()?.let { onCustomSecondsChanged(it.coerceIn(1, 300)) }
+                            },
+                            label = { Text(stringResource(R.string.countdown_custom_seconds)) },
+                            modifier = Modifier.width(120.dp),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.countdown_custom_unit))
+                    }
                 }
             }
         }

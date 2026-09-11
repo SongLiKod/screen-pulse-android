@@ -36,6 +36,9 @@
     <string name="countdown_3s">3 seconds</string>
     <string name="countdown_5s">5 seconds</string>
     <string name="countdown_none">None</string>
+    <string name="countdown_custom">Custom</string>
+    <string name="countdown_custom_seconds">Seconds</string>
+    <string name="countdown_custom_unit">sec</string>
     <string name="shortcut_key">Shortcut Key</string>
     <string name="floating_window">Floating Window</string>
     <string name="hide_floating_window">Hide Floating Window</string>

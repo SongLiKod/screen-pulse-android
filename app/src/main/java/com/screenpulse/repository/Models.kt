@@ -65,7 +65,8 @@ enum class RecordMode(val value: Int) {
 enum class CountdownMode(val value: Int) {
     NONE(0),
     THREE_SECONDS(3),
-    FIVE_SECONDS(5);
+    FIVE_SECONDS(5),
+    CUSTOM(-1);
 
     companion object {
         fun fromValue(value: Int): CountdownMode = entries.firstOrNull { it.value == value } ?: NONE

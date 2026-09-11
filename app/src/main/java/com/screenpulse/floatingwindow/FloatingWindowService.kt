@@ -24,6 +24,8 @@ class FloatingWindowService : Service() {
     companion object {
         const val ACTION_UPDATE_STATE = "com.screenpulse.floating.ACTION_UPDATE_STATE"
         const val EXTRA_STATE = "state"
+        const val ACTION_UPDATE_DURATION = "com.screenpulse.floating.ACTION_UPDATE_DURATION"
+        const val EXTRA_DURATION_MS = "duration_ms"
         const val ACTION_HIDE = "com.screenpulse.floating.ACTION_HIDE"
         const val ACTION_SHOW = "com.screenpulse.floating.ACTION_SHOW"
     }
@@ -48,6 +50,10 @@ class FloatingWindowService : Service() {
             ACTION_HIDE -> {
                 LogManager.log(LogManager.TAG_FLOAT, "hide floating window")
                 removeFloatingView()
+            }
+            ACTION_UPDATE_DURATION -> {
+                val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
+                updateDuration(durationMs)
             }
             ACTION_SHOW -> {
                 LogManager.log(LogManager.TAG_FLOAT, "show floating window")
@@ -197,6 +203,24 @@ class FloatingWindowService : Service() {
                 Configuration.UI_MODE_NIGHT_YES
     }
 
+    private fun updateDuration(durationMs: Long) {
+        val durationView = floatingView?.findViewById<android.widget.TextView>(R.id.floating_duration) ?: return
+        val isRecording = currentState == RecordingState.RECORDING || currentState == RecordingState.PAUSED
+        if (isRecording && durationMs > 0) {
+            val hours = durationMs / 3600000
+            val minutes = (durationMs % 3600000) / 60000
+            val seconds = (durationMs % 60000) / 1000
+            durationView.text = if (hours > 0) {
+                String.format("%d:%02d:%02d", hours, minutes, seconds)
+            } else {
+                String.format("%02d:%02d", minutes, seconds)
+            }
+            durationView.visibility = View.VISIBLE
+        } else {
+            durationView.visibility = View.GONE
+        }
+    }
+
     private fun updateFloatingIcon() {
         val iconView = floatingView?.findViewById<ImageView>(R.id.floating_icon)
 
@@ -211,11 +235,17 @@ class FloatingWindowService : Service() {
         val bgRes = if (isDarkMode()) R.drawable.floating_btn_bg_dark else R.drawable.floating_btn_bg
         floatingView?.findViewById<View>(R.id.floating_container)?.setBackgroundResource(bgRes)
 
+        val durationView = floatingView?.findViewById<android.widget.TextView>(R.id.floating_duration)
+        val isRecording = currentState == RecordingState.RECORDING || currentState == RecordingState.PAUSED
+        if (!isRecording) {
+            durationView?.visibility = View.GONE
+        }
+
         val screenshotBtn = floatingView?.findViewById<View>(R.id.floating_screenshot_btn)
         val annotationBtn = floatingView?.findViewById<View>(R.id.floating_annotation_btn)
         val stopBtn = floatingView?.findViewById<View>(R.id.floating_stop_btn)
         val hideBtn = floatingView?.findViewById<View>(R.id.floating_hide_btn)
-        if (currentState == RecordingState.RECORDING || currentState == RecordingState.PAUSED) {
+        if (isRecording) {
             screenshotBtn?.visibility = View.VISIBLE
             annotationBtn?.visibility = View.VISIBLE
             stopBtn?.visibility = View.VISIBLE

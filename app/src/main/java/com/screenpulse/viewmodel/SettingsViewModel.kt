@@ -40,6 +40,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val countdownMode: StateFlow<CountdownMode> = repository.countdownMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, CountdownMode.NONE)
 
+    val customCountdownSeconds: StateFlow<Int> = repository.customCountdownSeconds
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 10)
+
     val shortcutKey: StateFlow<Int> = repository.shortcutKey
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
@@ -96,6 +99,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setCompressionMode(mode: CompressionMode) = viewModelScope.launch { repository.setCompressionMode(mode) }
     fun setRecordMode(mode: RecordMode) = viewModelScope.launch { repository.setRecordMode(mode) }
     fun setCountdownMode(mode: CountdownMode) = viewModelScope.launch { repository.setCountdownMode(mode) }
+    fun setCustomCountdownSeconds(seconds: Int) = viewModelScope.launch { repository.setCustomCountdownSeconds(seconds) }
     fun setShortcutKey(keyCode: Int) {
         viewModelScope.launch {
             repository.setShortcutKey(keyCode)

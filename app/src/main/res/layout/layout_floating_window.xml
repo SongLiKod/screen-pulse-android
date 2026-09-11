@@ -8,11 +8,13 @@
 
     <LinearLayout
         android:id="@+id/floating_container"
-        android:layout_width="48dp"
+        android:layout_width="wrap_content"
         android:layout_height="48dp"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:background="@drawable/floating_btn_bg">
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/floating_btn_bg"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp">
 
         <ImageView
             android:id="@+id/floating_icon"
@@ -20,6 +22,18 @@
             android:layout_height="28dp"
             android:src="@drawable/ic_record"
             android:contentDescription="@string/start_recording" />
+
+        <TextView
+            android:id="@+id/floating_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:text="00:00"
+            android:visibility="gone"
+            android:fontFamily="monospace" />
     </LinearLayout>
 
     <ImageView

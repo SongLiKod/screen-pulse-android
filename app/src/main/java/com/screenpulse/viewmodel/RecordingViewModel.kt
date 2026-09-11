@@ -29,6 +29,17 @@ class RecordingViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isFloatingWindowVisible = MutableStateFlow(true)
     val isFloatingWindowVisible: StateFlow<Boolean> = _isFloatingWindowVisible.asStateFlow()
 
+    private val _navigateToVideoList = MutableStateFlow(false)
+    val navigateToVideoList: StateFlow<Boolean> = _navigateToVideoList.asStateFlow()
+
+    fun consumeNavigateToVideoList() {
+        _navigateToVideoList.value = false
+    }
+
+    fun requestNavigateToVideoList() {
+        _navigateToVideoList.value = true
+    }
+
     fun setRecordingState(state: RecordingState) {
         _recordingState.value = state
         com.screenpulse.shortcut.RecordingStateManager.updateState(state)

@@ -75,17 +75,35 @@ fun HomeScreen(
     val customResolutionWidth by settingsViewModel.customResolutionWidth.collectAsState()
     val customResolutionHeight by settingsViewModel.customResolutionHeight.collectAsState()
     val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
+    val customCountdownSeconds by settingsViewModel.customCountdownSeconds.collectAsState()
 
+    var previousState by remember { mutableStateOf(RecordingState.IDLE) }
     LaunchedEffect(Unit) {
         while (isActive) {
-            recordingViewModel.setRecordingState(com.screenpulse.shortcut.RecordingStateManager.currentState)
+            val newState = com.screenpulse.shortcut.RecordingStateManager.currentState
+n            recordingViewModel.setRecordingState(newState)
             recordingViewModel.updateCountdown(com.screenpulse.shortcut.RecordingStateManager.countdownRemaining)
             recordingViewModel.updateDuration(com.screenpulse.shortcut.RecordingStateManager.currentDurationMs)
+            // Detect recording completed: transition from RECORDING/PAUSED -> IDLE
+            if ((previousState == RecordingState.RECORDING || previousState == RecordingState.PAUSED) &&
+                newState == RecordingState.IDLE) {
+                recordingViewModel.requestNavigateToVideoList()
+            }
+            previousState = newState
             delay(150L)
         }
     }
 
     val customRegionData by settingsViewModel.customRegion.collectAsState()
+    val shouldNavigateToVideoList by recordingViewModel.navigateToVideoList.collectAsState()
+
+    // Navigate to video list when recording completes
+    LaunchedEffect(shouldNavigateToVideoList) {
+        if (shouldNavigateToVideoList) {
+            recordingViewModel.consumeNavigateToVideoList()
+            onNavigateToVideoList()
+        }
+    }
 
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showOverlayDialog by remember { mutableStateOf(false) }
@@ -102,6 +120,7 @@ fun HomeScreen(
                 audioMode = audioMode,
                 recordMode = recordMode,
                 countdownMode = countdownMode,
+                customCountdownSeconds = customCountdownSeconds,
                 resolution = resolution,
                 frameRate = frameRate,
                 bitrate = bitrate,
@@ -553,6 +572,7 @@ private fun startRecording(
     watermarkText: String,
     customResolutionWidth: Int,
     customResolutionHeight: Int,
+    customCountdownSeconds: Int,
     regionWidth: Int,
     regionHeight: Int,
     regionOffsetX: Int,
@@ -572,6 +592,7 @@ private fun startRecording(
         putExtra(ScreenRecordService.EXTRA_AUDIO_MODE, audioMode.value)
         putExtra(ScreenRecordService.EXTRA_RECORD_MODE, recordMode.value)
         putExtra(ScreenRecordService.EXTRA_COUNTDOWN, countdownMode.value)
+        putExtra(ScreenRecordService.EXTRA_CUSTOM_COUNTDOWN_SECONDS, customCountdownSeconds)
         putExtra(ScreenRecordService.EXTRA_RESOLUTION, resolution.value)
         putExtra(ScreenRecordService.EXTRA_FRAME_RATE, frameRate.value)
         putExtra(ScreenRecordService.EXTRA_BITRATE, effectiveBitrate)

@@ -87,6 +87,7 @@ class ScreenRecordService : Service() {
         const val EXTRA_CUSTOM_SAVE_TREE_URI = "custom_save_tree_uri"
         const val EXTRA_CUSTOM_RESOLUTION_WIDTH = "custom_resolution_width"
         const val EXTRA_CUSTOM_RESOLUTION_HEIGHT = "custom_resolution_height"
+        const val EXTRA_CUSTOM_COUNTDOWN_SECONDS = "custom_countdown_seconds"
         const val CHANNEL_ID = "screen_pulse_recording"
         const val NOTIFICATION_ID = 1001
     }
@@ -199,11 +200,15 @@ class ScreenRecordService : Service() {
         customSaveTreeUri = intent.getStringExtra(EXTRA_CUSTOM_SAVE_TREE_URI) ?: ""
 
         val countdown = CountdownMode.fromValue(intent.getIntExtra(EXTRA_COUNTDOWN, 0))
+        val countdownSeconds = when (countdown) {
+            CountdownMode.CUSTOM -> intent.getIntExtra(EXTRA_CUSTOM_COUNTDOWN_SECONDS, 10).coerceIn(1, 300)
+            else -> countdown.value
+        }
         if (countdown != CountdownMode.NONE) {
             RecordingStateManager.updateState(RecordingState.COUNTDOWN)
             syncFloatingWindow(RecordingState.COUNTDOWN)
             stateCallback?.onStateChanged(RecordingState.COUNTDOWN)
-            startCountdown(countdown.value, resultCode, resultData)
+            startCountdown(countdownSeconds, resultCode, resultData)
         } else {
             startRecordingInternal(resultCode, resultData)
         }
@@ -1037,6 +1042,14 @@ class ScreenRecordService : Service() {
                 val elapsed = System.currentTimeMillis() - recordingStartTime - totalPausedDuration
                 RecordingStateManager.updateDuration(elapsed)
                 stateCallback?.onDurationUpdate(elapsed)
+                // Send duration to floating window
+                try {
+                    val durationIntent = Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingWindowService::class.java).apply {
+                        action = com.screenpulse.floatingwindow.FloatingWindowService.ACTION_UPDATE_DURATION
+                        putExtra(com.screenpulse.floatingwindow.FloatingWindowService.EXTRA_DURATION_MS, elapsed)
+                    }
+                    startService(durationIntent)
+                } catch (_: Exception) {}
                 delay(100L)
             }
         }

@@ -36,6 +36,9 @@
     <string name="countdown_3s">3 秒</string>
     <string name="countdown_5s">5 秒</string>
     <string name="countdown_none">无</string>
+    <string name="countdown_custom">自定义</string>
+    <string name="countdown_custom_seconds">秒数</string>
+    <string name="countdown_custom_unit">秒</string>
     <string name="shortcut_key">快捷键</string>
     <string name="floating_window">悬浮窗</string>
     <string name="hide_floating_window">隐藏悬浮窗</string>

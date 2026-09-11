@@ -24,6 +24,7 @@ class SettingsRepository(private val context: Context) {
         val COMPRESSION_MODE = intPreferencesKey("compression_mode")
         val RECORD_MODE = intPreferencesKey("record_mode")
         val COUNTDOWN_MODE = intPreferencesKey("countdown_mode")
+        val CUSTOM_COUNTDOWN_SECONDS = intPreferencesKey("custom_countdown_seconds")
         val SHORTCUT_KEY = intPreferencesKey("shortcut_key")
         val SHORTCUT_KEY_NAME = stringPreferencesKey("shortcut_key_name")
         val WATERMARK_ENABLED = booleanPreferencesKey("watermark_enabled")
@@ -83,6 +84,10 @@ class SettingsRepository(private val context: Context) {
 
     val countdownMode: Flow<CountdownMode> = context.dataStore.data.map { prefs ->
         CountdownMode.fromValue(prefs[Keys.COUNTDOWN_MODE] ?: CountdownMode.NONE.value)
+    }
+
+    val customCountdownSeconds: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[Keys.CUSTOM_COUNTDOWN_SECONDS] ?: 10
     }
 
     val shortcutKey: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -184,6 +189,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setCountdownMode(mode: CountdownMode) {
         context.dataStore.edit { it[Keys.COUNTDOWN_MODE] = mode.value }
+    }
+
+    suspend fun setCustomCountdownSeconds(seconds: Int) {
+        context.dataStore.edit { it[Keys.CUSTOM_COUNTDOWN_SECONDS] = seconds.coerceIn(1, 300) }
     }
 
     suspend fun setShortcutKey(keyCode: Int) {
