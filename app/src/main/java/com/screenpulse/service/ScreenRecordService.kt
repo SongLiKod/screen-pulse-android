@@ -132,6 +132,9 @@ class ScreenRecordService : Service() {
     private var pipEnabled = false
     private var customResolutionWidth = 1920
     private var customResolutionHeight = 1080
+    private var recordWidth = 0
+    private var recordHeight = 0
+    private var recordDensityDpi = 0
 
     private var stateCallback: RecordingStateCallback? = null
 
@@ -292,12 +295,13 @@ class ScreenRecordService : Service() {
             }
         } catch (e: Exception) {
             try {
-                MediaCodec.createByCodecName(
-                    MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForName("OMX.google.h264.encoder")
-                        ?: MediaCodecList(MediaCodecList.REGULAR_CODECS).encoderInfos.first {
-                            it.capabilities.isEncoder && it.supportedTypes.contains(MediaFormat.MIMETYPE_VIDEO_AVC)
-                        }.name
-                ).apply {
+                val fallbackCodecName = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                    .firstOrNull {
+                        it.isEncoder && it.supportedTypes.contains(MediaFormat.MIMETYPE_VIDEO_AVC)
+                    }
+                    ?.name
+                    ?: throw RuntimeException("No H.264 encoder available")
+                MediaCodec.createByCodecName(fallbackCodecName).apply {
                     configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                     encoderInputSurface = createInputSurface()
                     start()
@@ -317,14 +321,29 @@ class ScreenRecordService : Service() {
     }
 
     private fun setupVirtualDisplay(width: Int, height: Int, densityDpi: Int) {
-        val displayWidth = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0) customWidth else width
-        val displayHeight = if (currentRecordMode == RecordMode.CUSTOM_REGION && customHeight > 0) customHeight else height
+        recordWidth = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0) customWidth else width
+        recordHeight = if (currentRecordMode == RecordMode.CUSTOM_REGION && customHeight > 0) customHeight else height
+        recordDensityDpi = densityDpi
 
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenPulse",
-            displayWidth,
-            displayHeight,
-            densityDpi,
+            recordWidth,
+            recordHeight,
+            recordDensityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            encoderInputSurface,
+            null,
+            null
+        )
+    }
+
+    private fun recreateVirtualDisplay() {
+        if (virtualDisplay != null || encoderInputSurface == null) return
+        virtualDisplay = mediaProjection?.createVirtualDisplay(
+            "ScreenPulse",
+            recordWidth,
+            recordHeight,
+            recordDensityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             encoderInputSurface,
             null,
@@ -561,10 +580,11 @@ class ScreenRecordService : Service() {
         if (!isRecording || isPaused) return
         isPaused = true
         pausedDuration = System.currentTimeMillis()
-        mediaCodec?.pause()
-        micAudioRecord?.pause()
-        systemAudioRecord?.pause()
         durationJob?.cancel()
+        runCatching { virtualDisplay?.release() }
+        virtualDisplay = null
+        runCatching { micAudioRecord?.stop() }
+        runCatching { systemAudioRecord?.stop() }
         stateCallback?.onStateChanged(RecordingState.PAUSED)
         updateNotification(getString(R.string.paused))
     }
@@ -573,9 +593,9 @@ class ScreenRecordService : Service() {
         if (!isRecording || !isPaused) return
         isPaused = false
         totalPausedDuration += System.currentTimeMillis() - pausedDuration
-        mediaCodec?.resume()
-        micAudioRecord?.resume()
-        systemAudioRecord?.resume()
+        runCatching { micAudioRecord?.startRecording() }
+        runCatching { systemAudioRecord?.startRecording() }
+        recreateVirtualDisplay()
         startDurationTracking()
         stateCallback?.onStateChanged(RecordingState.RECORDING)
         updateNotification(getString(R.string.recording))

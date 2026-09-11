@@ -169,7 +169,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            StatusCard(recordingState = recordingState, duration = duration)
+            StatusCard(state = recordingState, duration = duration)
 
             Spacer(modifier = Modifier.height(16.dp))
 
