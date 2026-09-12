@@ -11,12 +11,8 @@ public:
     void process(const int16_t* pcmInput, int16_t* pcmOutput, int sampleCount);
 
 private:
-    static constexpr int WINDOW_SIZE = 512;
-    static constexpr float SMOOTHING_FACTOR = 0.98f;
-    std::vector<float> noiseEstimate;
-    std::vector<float> prevOutput;
+    float noiseFloor = 0.0f;
     bool initialized = false;
 
-    void initialize(int sampleCount);
-    float estimateNoise(float sample, int index);
+    void initialize();
 };
