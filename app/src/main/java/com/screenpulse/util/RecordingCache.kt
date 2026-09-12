@@ -54,6 +54,8 @@ object RecordingCache {
     private var _config: Config = Config()
     @Volatile
     private var pendingRegion: CustomRegion? = null
+    @Volatile
+    private var syncedFromUi: Boolean = false
 
     /** Whether the cache contains a valid MediaProjection authorization. */
     val isValid: Boolean
@@ -65,6 +67,7 @@ object RecordingCache {
     /**
      * Saves the MediaProjection authorization result and recording configuration.
      */
+    @Synchronized
     fun save(code: Int, data: Intent, config: Config) {
         _resultCode = code
         _resultData = data
@@ -73,9 +76,36 @@ object RecordingCache {
         LogManager.log(LogManager.TAG_FLOAT, "RecordingCache saved: resultCode=$code")
     }
 
+    @Synchronized
+    fun saveAuthorization(code: Int, data: Intent) {
+        _resultCode = code
+        _resultData = data
+        LogManager.log(LogManager.TAG_FLOAT, "RecordingCache authorization saved: resultCode=$code")
+    }
+
+    @Synchronized
+    fun patch(transform: (Config) -> Config) {
+        syncedFromUi = true
+        _config = transform(_config)
+        pendingRegion?.let { applyPendingRegionLocked(it) }
+    }
+
+    @Synchronized
+    fun markSyncedFromUi() {
+        syncedFromUi = true
+    }
+
+    @Synchronized
+    fun ensureConfigLoaded(context: Context) {
+        if (!syncedFromUi) {
+            refreshConfigFromSettingsLocked(context)
+        }
+    }
+
     /**
      * Clears the cache. Called when the MediaProjection token becomes invalid.
      */
+    @Synchronized
     fun clear() {
         _resultCode = 0
         _resultData = null
@@ -86,7 +116,12 @@ object RecordingCache {
      * Reloads recording parameters from SettingsRepository so the floating window
      * always starts with the latest user configuration.
      */
+    @Synchronized
     fun refreshConfigFromSettings(context: Context) {
+        refreshConfigFromSettingsLocked(context)
+    }
+
+    private fun refreshConfigFromSettingsLocked(context: Context) {
         val appContext = context.applicationContext
         val repo = (appContext as? ScreenPulseApp)?.settingsRepository
             ?: SettingsRepository(appContext)
@@ -141,11 +176,17 @@ object RecordingCache {
                 floatingWindowPersistent = floatingWindowPersistent
             )
         }
+        if (syncedFromUi) {
+            pendingRegion?.let { applyPendingRegionLocked(it) }
+            LogManager.log(LogManager.TAG_FLOAT, "RecordingCache refresh skipped: UI already synced")
+            return
+        }
         _config = latest
         pendingRegion?.let { applyPendingRegionLocked(it) }
         LogManager.log(LogManager.TAG_FLOAT, "RecordingCache config refreshed from settings")
     }
 
+    @Synchronized
     fun applyRegion(region: CustomRegion) {
         pendingRegion = region
         applyPendingRegionLocked(region)
@@ -168,12 +209,13 @@ object RecordingCache {
      * Creates a ScreenRecordService ACTION_START intent from the current config.
      * resultCode/resultData are optional when a live MediaProjection is already held.
      */
+    @Synchronized
     fun createStartIntent(
         context: Context,
         resultCode: Int? = null,
         resultData: Intent? = null
     ): Intent {
-        refreshConfigFromSettings(context)
+        ensureConfigLoaded(context)
         pendingRegion?.let {
             applyPendingRegionLocked(it)
             pendingRegion = null

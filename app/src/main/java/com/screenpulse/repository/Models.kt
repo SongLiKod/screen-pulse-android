@@ -89,8 +89,8 @@ enum class BitrateMode(val value: Int) {
     companion object {
         fun fromValue(value: Int): BitrateMode = entries.firstOrNull { it.value == value } ?: SMART
 
-        fun calculateSmartBitrate(resolution: Resolution, frameRate: FrameRate): Int {
-            val pixels = resolution.width.toLong() * resolution.height.toLong()
+        fun calculateSmartBitrate(width: Int, height: Int, frameRate: FrameRate): Int {
+            val pixels = width.toLong().coerceAtLeast(1L) * height.toLong().coerceAtLeast(1L)
             val baseBitrate = when {
                 pixels <= 426L * 240 -> 1_000_000L
                 pixels <= 854L * 480 -> 2_000_000L
@@ -101,6 +101,12 @@ enum class BitrateMode(val value: Int) {
             }
             val fpsMultiplier = if (frameRate == FrameRate.FPS_60) 1.5 else 1.0
             return (baseBitrate * fpsMultiplier).toInt()
+        }
+
+        fun calculateSmartBitrate(resolution: Resolution, frameRate: FrameRate): Int {
+            val width = if (resolution == Resolution.CUSTOM) 1920 else resolution.width
+            val height = if (resolution == Resolution.CUSTOM) 1080 else resolution.height
+            return calculateSmartBitrate(width, height, frameRate)
         }
     }
 }

@@ -107,6 +107,7 @@ object MediaProjectionHolder {
         try {
             val existing = dummyDisplay
             if (existing != null) {
+                runCatching { existing.resize(width, height, densityDpi) }
                 existing.setSurface(surface)
                 dummyDisplay = null
                 val reader = dummyReader
@@ -138,13 +139,15 @@ object MediaProjectionHolder {
     fun park(width: Int = 16, height: Int = 16, densityDpi: Int = 160) {
         val p = projection ?: return
         replacingDisplays = true
-        if (dummyDisplay != null) {
-            LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder already parked")
-            return
-        }
         val w = width.coerceAtLeast(16)
         val h = height.coerceAtLeast(16)
         val dpi = densityDpi.coerceAtLeast(160)
+        val existing = dummyDisplay
+        if (existing != null) {
+            runCatching { existing.resize(w, h, dpi) }
+            LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder already parked, resize ${w}x$h")
+            return
+        }
         val sizes = listOf(w to h, 1280 to 720, 16 to 16)
         for ((pw, ph) in sizes) {
             try {

@@ -199,10 +199,10 @@ class RegionCropRenderer {
         LogManager.log(TAG, "init: crop tex coords: left=$left top=$top right=$right bottom=$bottom")
 
         val texCoords = floatArrayOf(
-            right, bottom,
             left, bottom,
-            right, top,
-            left, top
+            right, bottom,
+            left, top,
+            right, top
         )
         cropTexCoordBuffer = java.nio.ByteBuffer.allocateDirect(texCoords.size * 4)
             .order(java.nio.ByteOrder.nativeOrder())

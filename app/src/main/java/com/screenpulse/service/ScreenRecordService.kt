@@ -277,7 +277,13 @@ class ScreenRecordService : Service() {
             val metrics = DisplayMetrics()
             @Suppress("DEPRECATION")
             windowManager.defaultDisplay.getRealMetrics(metrics)
-            MediaProjectionHolder.park(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+            val useCustomRegion = currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0
+            if (useCustomRegion) {
+                MediaProjectionHolder.park(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+            } else {
+                val (parkW, parkH) = computeFullScreenEncodeSize(metrics.widthPixels, metrics.heightPixels)
+                MediaProjectionHolder.park(parkW, parkH, metrics.densityDpi)
+            }
             startCountdownOverlay()
             startCountdown(countdownSeconds)
         } else {
@@ -411,32 +417,15 @@ class ScreenRecordService : Service() {
         windowManager.defaultDisplay.getRealMetrics(metrics)
         prepareCustomRegion(metrics.widthPixels, metrics.heightPixels)
 
-        val width: Int
-        val height: Int
-        if (currentResolution == Resolution.CUSTOM) {
-            width = alignForCodec(customResolutionWidth)
-            height = alignForCodec(customResolutionHeight)
-        } else {
-            // Adapt resolution to device orientation: Resolution enum values are landscape,
-            // but the device may be in portrait — swap width/height to match.
-            val resW = currentResolution.width
-            val resH = currentResolution.height
-            val isDevicePortrait = metrics.heightPixels > metrics.widthPixels
-            val isResLandscape = resW > resH
-            if (isDevicePortrait && isResLandscape) {
-                width = resH
-                height = resW
-            } else {
-                width = resW
-                height = resH
-            }
-        }
+        val (width, height) = computeFullScreenEncodeSize(metrics.widthPixels, metrics.heightPixels)
 
         val useCustomRegion = currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0
         val captureWidth = if (useCustomRegion) metrics.widthPixels else width
         val captureHeight = if (useCustomRegion) metrics.heightPixels else height
         val codecWidth = if (useCustomRegion) customWidth else width
         val codecHeight = if (useCustomRegion) customHeight else height
+        recordWidth = codecWidth
+        recordHeight = codecHeight
 
         // Guard against double-start: if already recording or stopping, bail out
         if (isRecording || isStopping) {
@@ -452,7 +441,7 @@ class ScreenRecordService : Service() {
             "start recording: res=${currentResolution.value} capture=${captureWidth}x$captureHeight " +
             "codec=${codecWidth}x$codecHeight fps=${currentFrameRate.value} " +
             "bitrate=${
-                if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
+                if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(codecWidth, codecHeight, currentFrameRate)
             } audioMode=${currentAudioMode} recordMode=${currentRecordMode} " +
             "region=${customOffsetX},${customOffsetY} ${customWidth}x$customHeight " +
             "out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
@@ -535,6 +524,28 @@ class ScreenRecordService : Service() {
      * H.264 encoders require even dimensions; many devices need multiples of 16.
      */
     private fun alignForCodec(value: Int): Int = (value / 16 * 16).coerceAtLeast(16)
+
+    /**
+     * Scale the real screen into the selected resolution tier while keeping
+     * the device aspect ratio. 1080P means the short side is at most 1080.
+     */
+    private fun computeFullScreenEncodeSize(screenWidth: Int, screenHeight: Int): Pair<Int, Int> {
+        if (currentResolution == Resolution.CUSTOM) {
+            return alignForCodec(customResolutionWidth) to alignForCodec(customResolutionHeight)
+        }
+        val safeW = screenWidth.coerceAtLeast(16)
+        val safeH = screenHeight.coerceAtLeast(16)
+        val targetShort = minOf(currentResolution.width, currentResolution.height).coerceAtLeast(16)
+        val screenShort = minOf(safeW, safeH)
+        val scale = minOf(1f, targetShort.toFloat() / screenShort.toFloat())
+        val width = alignForCodec((safeW * scale).toInt().coerceAtLeast(16))
+        val height = alignForCodec((safeH * scale).toInt().coerceAtLeast(16))
+        LogManager.log(
+            LogManager.TAG_RECORD,
+            "full-screen size: screen=${safeW}x$safeH tier=${currentResolution.value} encode=${width}x$height scale=$scale"
+        )
+        return width to height
+    }
 
     /**
      * Clamp the saved region to the current screen and align it for MediaCodec.
@@ -622,7 +633,7 @@ class ScreenRecordService : Service() {
         return if (currentBitrate > 0) {
             currentBitrate
         } else {
-            BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
+            BitrateMode.calculateSmartBitrate(recordWidth, recordHeight, currentFrameRate)
         }
     }
 

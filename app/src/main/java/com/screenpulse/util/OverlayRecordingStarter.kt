@@ -16,7 +16,7 @@ import com.screenpulse.ui.regionselect.RegionSelectActivity
 object OverlayRecordingStarter {
 
     fun start(context: Context) {
-        RecordingCache.refreshConfigFromSettings(context)
+        RecordingCache.ensureConfigLoaded(context)
         if (RecordingCache.config.recordMode == RecordMode.CUSTOM_REGION.value) {
             LogManager.log(LogManager.TAG_FLOAT, "OverlayRecordingStarter: select region first")
             val selectIntent = Intent(context, RegionSelectActivity::class.java).apply {
