@@ -161,6 +161,12 @@
     <string name="floating_window_persistent">悬浮窗常驻</string>
     <string name="floating_window_persistent_desc">未录制时也显示悬浮控制按钮，点击后按当前配置直接开始录制，不再打开应用界面</string>
 
+    <string name="capture_protected_content">增强捕获</string>
+    <string name="capture_protected_content_desc">以屏幕原始分辨率录制，并捕获更完整的系统音频。可改善部分防录屏应用的画面和声音</string>
+    <string name="capture_protected_content_warning_title">开启增强捕获？</string>
+    <string name="capture_protected_content_warning">将尝试捕获更多被防录屏限制的画面和声音。部分应用仍可能黑屏或无声。请仅录制你有权录制的内容。</string>
+    <string name="capture_protected_content_enable">开启</string>
+
     <string name="battery_disable">去关闭</string>
     <string name="battery_later">稍后</string>
 

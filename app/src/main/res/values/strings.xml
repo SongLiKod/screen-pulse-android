@@ -161,6 +161,12 @@
     <string name="floating_window_persistent">Persistent Floating Window</string>
     <string name="floating_window_persistent_desc">Show floating control when not recording. Tap it to start with current settings without opening the app</string>
 
+    <string name="capture_protected_content">Enhanced Capture</string>
+    <string name="capture_protected_content_desc">Record at full screen resolution and capture more system audio. May help with apps that block recording</string>
+    <string name="capture_protected_content_warning_title">Enable enhanced capture?</string>
+    <string name="capture_protected_content_warning">This tries to capture more picture and sound from apps that block recording. Some apps can still show a blank or silent result. Use it only for content you are allowed to record.</string>
+    <string name="capture_protected_content_enable">Enable</string>
+
     <string name="battery_disable">Disable</string>
     <string name="battery_later">Later</string>
 
