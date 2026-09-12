@@ -98,6 +98,10 @@
             android:name=".floatingwindow.FloatingRegionService"
             android:exported="false" />
 
+        <service
+            android:name=".floatingwindow.FloatingRegionSelectService"
+            android:exported="false" />
+
         <receiver
             android:name=".shortcut.ShortcutKeyReceiver"
             android:exported="false">
