@@ -206,6 +206,33 @@ class ScreenRecordService : Service() {
         }
         LogManager.log(LogManager.TAG_RECORD, "handleStart resultCode=$resultCode resultData=${resultData != null}")
 
+        // CRITICAL: Call startForeground() immediately on Android 14+.
+        // The system kills services that don't call startForeground() within ~5 seconds
+        // of onStartCommand(). When a countdown is enabled, startRecordingInternal()
+        // (which calls startForeground) won't be called until after the countdown finishes,
+        // potentially exceeding the timeout. Calling it here ensures the service stays alive.
+        startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+
+        // Validate MediaProjection authorization before proceeding.
+        // Without valid resultData, recording cannot start — fail fast instead of
+        // running a countdown that will never lead to recording.
+        if (resultData == null) {
+            LogManager.log(LogManager.TAG_RECORD, "handleStart FAILED: resultData is null, cannot start recording")
+            RecordingCache.clear()
+            RecordingStateManager.updateState(RecordingState.IDLE)
+            syncFloatingWindow(RecordingState.IDLE)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+
+        // Reset stale stopping flag from a previous recording that hasn't fully cleaned up.
+        // Without this, startRecordingInternal() would bail out because isStopping == true.
+        if (isStopping) {
+            LogManager.log(LogManager.TAG_RECORD, "handleStart: resetting stale isStopping flag")
+            isStopping = false
+        }
+
         currentResolution = Resolution.fromValue(intent.getStringExtra(EXTRA_RESOLUTION) ?: "1080P")
         currentFrameRate = FrameRate.fromValue(intent.getIntExtra(EXTRA_FRAME_RATE, 30))
         currentBitrate = intent.getIntExtra(EXTRA_BITRATE, 8000000)
@@ -301,7 +328,12 @@ class ScreenRecordService : Service() {
 
     private fun startRecordingInternal(resultCode: Int, resultData: Intent?) {
         if (resultData == null) {
+            LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal FAILED: resultData is null")
+            RecordingCache.clear()
             RecordingStateManager.updateState(RecordingState.IDLE)
+            syncFloatingWindow(RecordingState.IDLE)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
             return
         }
 
