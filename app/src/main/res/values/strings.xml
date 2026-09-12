@@ -158,6 +158,9 @@
     <string name="pip_recording_desc">Front camera overlay during recording</string>
     <string name="pip_size_format">PiP Window Size: %1$sdp</string>
 
+    <string name="floating_window_persistent">Persistent Floating Window</string>
+    <string name="floating_window_persistent_desc">Show floating control when not recording. Tap it to start with current settings without opening the app</string>
+
     <string name="battery_disable">Disable</string>
     <string name="battery_later">Later</string>
 
@@ -197,9 +200,13 @@
     <string name="cd_close">Close</string>
     <string name="tool_pen">Pen</string>
     <string name="tool_arrow">Arrow</string>
+    <string name="tool_rectangle">Rectangle</string>
+    <string name="tool_circle">Circle</string>
     <string name="tool_text">Text</string>
     <string name="annotation_add_text">Add Text</string>
     <string name="annotation_enter_text">Enter text</string>
+    <string name="floating_window_channel">Floating Window</string>
+    <string name="floating_window_notification">Floating window is active</string>
 
     <string name="language_follow_system">Follow System</string>
     <string name="language_english">English</string>

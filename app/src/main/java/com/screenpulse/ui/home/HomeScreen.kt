@@ -39,8 +39,11 @@ import com.screenpulse.ui.regionselect.RegionSelectActivity
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.viewmodel.RecordingViewModel
 import com.screenpulse.viewmodel.SettingsViewModel
+import androidx.core.content.ContextCompat
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.MediaProjectionHolder
 import com.screenpulse.util.ProjectionRequestBus
+import com.screenpulse.util.RecordingCache
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.concurrent.TimeUnit
@@ -79,6 +82,7 @@ fun HomeScreen(
     val customResolutionHeight by settingsViewModel.customResolutionHeight.collectAsState()
     val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
     val customCountdownSeconds by settingsViewModel.customCountdownSeconds.collectAsState()
+    val floatingWindowPersistent by settingsViewModel.floatingWindowPersistent.collectAsState()
 
     var previousState by remember { mutableStateOf(RecordingState.IDLE) }
     LaunchedEffect(Unit) {
@@ -94,6 +98,25 @@ fun HomeScreen(
             }
             previousState = newState
             delay(150L)
+        }
+    }
+
+    // Auto-start persistent floating window if setting is enabled
+    LaunchedEffect(floatingWindowPersistent) {
+        if (floatingWindowPersistent && PermissionManager.hasOverlayPermission(context)) {
+            val currentState = com.screenpulse.shortcut.RecordingStateManager.currentState
+            if (currentState == RecordingState.IDLE) {
+                startFloatingWindow(context, persistent = true)
+            }
+        } else if (!floatingWindowPersistent) {
+            // When persistent mode is disabled, hide the floating window if it's in IDLE state
+            val currentState = com.screenpulse.shortcut.RecordingStateManager.currentState
+            if (currentState == RecordingState.IDLE) {
+                val hideIntent = Intent(context, FloatingWindowService::class.java).apply {
+                    action = FloatingWindowService.ACTION_HIDE
+                }
+                context.startService(hideIntent)
+            }
         }
     }
 
@@ -125,6 +148,39 @@ fun HomeScreen(
                     putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data!!)
                 })
             } else {
+                // Cache the MediaProjection authorization and recording config
+                // so the floating window can start recording directly without opening the app.
+                RecordingCache.save(
+                    code = result.resultCode,
+                    data = result.data!!,
+                    config = RecordingCache.Config(
+                        audioMode = audioMode.value,
+                        recordMode = recordMode.value,
+                        countdownMode = countdownMode.value,
+                        customCountdownSeconds = customCountdownSeconds,
+                        resolution = resolution.value,
+                        frameRate = frameRate.value,
+                        bitrate = bitrate,
+                        bitrateMode = bitrateMode.value,
+                        compressionMode = compressionMode.value,
+                        systemVolume = systemVolume,
+                        micVolume = micVolume,
+                        watermarkEnabled = watermarkEnabled,
+                        watermarkText = watermarkText,
+                        watermarkType = watermarkType.value,
+                        watermarkImageUri = watermarkImageUri,
+                        pipEnabled = pipEnabled,
+                        pipSize = pipSize,
+                        customResolutionWidth = customResolutionWidth,
+                        customResolutionHeight = customResolutionHeight,
+                        regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
+                        regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
+                        regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
+                        regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
+                        customSaveTreeUri = customSaveTreeUri,
+                        floatingWindowPersistent = floatingWindowPersistent
+                    )
+                )
                 startRecording(
                     context = context,
                     resultCode = result.resultCode,
@@ -151,9 +207,10 @@ fun HomeScreen(
                     regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
                     regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
                     customSaveTreeUri = customSaveTreeUri,
+                    floatingWindowPersistent = floatingWindowPersistent,
                     settingsViewModel = settingsViewModel
                 )
-                startFloatingWindow(context)
+                startFloatingWindow(context, floatingWindowPersistent)
                 if (pipEnabled) {
                     startPipOverlay(context, pipSize)
                 }
@@ -212,6 +269,15 @@ fun HomeScreen(
     }
 
     fun requestRecording() {
+        if (MediaProjectionHolder.isActive) {
+            LogManager.log(LogManager.TAG_UI, "Record button: MediaProjection already held, start directly")
+            ContextCompat.startForegroundService(context, RecordingCache.createStartIntent(context))
+            if (pipEnabled) {
+                startPipOverlay(context, pipSize)
+            }
+            startFloatingWindow(context, floatingWindowPersistent)
+            return
+        }
         val permissions = PermissionManager.getRequiredPermissions()
         val needsPermission = permissions.any { perm ->
             androidx.core.content.ContextCompat.checkSelfPermission(
@@ -660,6 +726,7 @@ private fun startRecording(
     regionOffsetX: Int,
     regionOffsetY: Int,
     customSaveTreeUri: String,
+    floatingWindowPersistent: Boolean,
     settingsViewModel: SettingsViewModel
 ) {
     val effectiveBitrate = if (bitrateMode == com.screenpulse.repository.BitrateMode.SMART) {
@@ -692,12 +759,16 @@ private fun startRecording(
         putExtra(ScreenRecordService.EXTRA_CUSTOM_OFFSET_X, regionOffsetX)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_OFFSET_Y, regionOffsetY)
         putExtra(ScreenRecordService.EXTRA_CUSTOM_SAVE_TREE_URI, customSaveTreeUri)
+        putExtra(ScreenRecordService.EXTRA_FLOATING_WINDOW_PERSISTENT, floatingWindowPersistent)
     }
-    context.startService(intent)
+    ContextCompat.startForegroundService(context, intent)
 }
 
-private fun startFloatingWindow(context: Context) {
-    val intent = Intent(context, FloatingWindowService::class.java)
+private fun startFloatingWindow(context: Context, persistent: Boolean = false) {
+    val intent = Intent(context, FloatingWindowService::class.java).apply {
+        action = FloatingWindowService.ACTION_SHOW_PERSISTENT
+        putExtra(FloatingWindowService.EXTRA_PERSISTENT, persistent)
+    }
     context.startService(intent)
 }
 

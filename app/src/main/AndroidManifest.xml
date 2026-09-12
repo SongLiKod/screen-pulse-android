@@ -4,6 +4,7 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -24,6 +25,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ScreenPulse"
         tools:targetApi="34">
+        <property
+            android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+            android:value="Floating window overlay for screen recording controls" />
 
         <activity
             android:name=".ui.MainActivity"
@@ -40,6 +44,16 @@
             android:name=".ui.regionselect.RegionSelectActivity"
             android:theme="@style/Theme.ScreenPulse.Transparent" />
 
+        <activity
+            android:name=".ui.ProjectionConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:finishOnTaskLaunch="true"
+            android:launchMode="singleInstance"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.ScreenPulse.Transparent" />
+
         <service
             android:name=".service.ScreenRecordService"
             android:exported="false"
@@ -47,7 +61,8 @@
 
         <service
             android:name=".floatingwindow.FloatingWindowService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
 
         <service
             android:name=".floatingwindow.FloatingAnnotationService"
@@ -55,6 +70,10 @@
 
         <service
             android:name=".floatingwindow.FloatingPipService"
+            android:exported="false" />
+
+        <service
+            android:name=".floatingwindow.FloatingCountdownService"
             android:exported="false" />
 
         <service

@@ -253,6 +253,11 @@ private fun loadVideos(context: Context): List<VideoItem> {
     val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
     if (dir.exists()) {
         dir.listFiles { file -> file.extension == "mp4" }?.forEach { file ->
+            // Skip empty or trivially small files — they are not valid recordings
+            if (file.length() < 1024) {
+                LogManager.log(LogManager.TAG_UI, "Skipping invalid/small video file: ${file.name} size=${file.length()}")
+                return@forEach
+            }
             val duration = try {
                 retriever.setDataSource(file.absolutePath)
                 formatDuration(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L)

@@ -50,6 +50,15 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Handle launch from floating window when Activity was not running.
+        // If the user tapped the floating point while the app was in the background
+        // (or not running at all), FloatingWindowService starts this Activity with
+        // the REQUEST_PROJECTION_ACTION. We must call ProjectionRequestBus.request()
+        // here so that the HomeScreen LaunchedEffect picks it up after composition.
+        if (intent?.action == ProjectionRequestBus.REQUEST_PROJECTION_ACTION) {
+            ProjectionRequestBus.request()
+        }
+
         setContent {
             val settingsViewModel: SettingsViewModel = viewModel()
             val themeMode by settingsViewModel.themeMode.collectAsState()
@@ -151,5 +160,18 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         runCatching { unregisterReceiver(projectionRequestReceiver) }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        // Handle tap on floating window while Activity is already running (singleTop).
+        // When the user taps the floating point while the app is in the background,
+        // FloatingWindowService starts this Activity with REQUEST_PROJECTION_ACTION.
+        // Since we use FLAG_ACTIVITY_SINGLE_TOP, onNewIntent() is called instead of
+        // onCreate(). We must call ProjectionRequestBus.request() here to trigger
+        // the recording flow.
+        if (intent?.action == ProjectionRequestBus.REQUEST_PROJECTION_ACTION) {
+            ProjectionRequestBus.request()
+        }
     }
 }

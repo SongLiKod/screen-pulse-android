@@ -44,10 +44,15 @@ class SettingsRepository(private val context: Context) {
         val BITRATE_MODE = intPreferencesKey("bitrate_mode")
         val LANGUAGE = stringPreferencesKey("language")
         val CUSTOM_SAVE_TREE_URI = stringPreferencesKey("custom_save_tree_uri")
+        val FLOATING_WINDOW_PERSISTENT = booleanPreferencesKey("floating_window_persistent")
     }
 
     val customSaveTreeUri: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[Keys.CUSTOM_SAVE_TREE_URI] ?: ""
+    }
+
+    val floatingWindowPersistent: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.FLOATING_WINDOW_PERSISTENT] ?: false
     }
 
     suspend fun setCustomSaveTreeUri(uri: String) {
@@ -254,6 +259,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setBitrateMode(mode: BitrateMode) {
         context.dataStore.edit { it[Keys.BITRATE_MODE] = mode.value }
+    }
+
+    suspend fun setFloatingWindowPersistent(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.FLOATING_WINDOW_PERSISTENT] = enabled }
     }
 }
 

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.screenpulse.service.ScreenRecordService
+import com.screenpulse.util.OverlayRecordingStarter
 import com.screenpulse.viewmodel.RecordingState
 
 class ShortcutKeyReceiver : BroadcastReceiver() {
@@ -12,14 +13,20 @@ class ShortcutKeyReceiver : BroadcastReceiver() {
         if (intent.action != "com.screenpulse.ACTION_TOGGLE_RECORDING") return
 
         val currentState = RecordingStateManager.currentState
-        val serviceIntent = Intent(context, ScreenRecordService::class.java)
-        serviceIntent.action = when (currentState) {
-            RecordingState.IDLE -> ScreenRecordService.ACTION_START
-            RecordingState.RECORDING -> ScreenRecordService.ACTION_PAUSE
-            RecordingState.PAUSED -> ScreenRecordService.ACTION_RESUME
+        when (currentState) {
+            RecordingState.IDLE -> OverlayRecordingStarter.start(context)
+            RecordingState.RECORDING -> context.startService(
+                Intent(context, ScreenRecordService::class.java).apply {
+                    action = ScreenRecordService.ACTION_PAUSE
+                }
+            )
+            RecordingState.PAUSED -> context.startService(
+                Intent(context, ScreenRecordService::class.java).apply {
+                    action = ScreenRecordService.ACTION_RESUME
+                }
+            )
             RecordingState.COUNTDOWN -> return
         }
-        context.startService(serviceIntent)
     }
 }
 

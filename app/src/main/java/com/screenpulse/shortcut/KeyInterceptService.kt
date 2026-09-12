@@ -5,6 +5,7 @@ import android.content.Intent
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.screenpulse.service.ScreenRecordService
+import com.screenpulse.util.OverlayRecordingStarter
 import com.screenpulse.viewmodel.RecordingState
 
 class KeyInterceptService : AccessibilityService() {
@@ -24,14 +25,20 @@ class KeyInterceptService : AccessibilityService() {
         }
 
         val currentState = RecordingStateManager.currentState
-        val serviceIntent = Intent(this, ScreenRecordService::class.java)
-        serviceIntent.action = when (currentState) {
-            RecordingState.IDLE -> ScreenRecordService.ACTION_START
-            RecordingState.RECORDING -> ScreenRecordService.ACTION_PAUSE
-            RecordingState.PAUSED -> ScreenRecordService.ACTION_RESUME
+        when (currentState) {
+            RecordingState.IDLE -> OverlayRecordingStarter.start(this)
+            RecordingState.RECORDING -> startService(
+                Intent(this, ScreenRecordService::class.java).apply {
+                    action = ScreenRecordService.ACTION_PAUSE
+                }
+            )
+            RecordingState.PAUSED -> startService(
+                Intent(this, ScreenRecordService::class.java).apply {
+                    action = ScreenRecordService.ACTION_RESUME
+                }
+            )
             RecordingState.COUNTDOWN -> return true
         }
-        startService(serviceIntent)
         return true
     }
 

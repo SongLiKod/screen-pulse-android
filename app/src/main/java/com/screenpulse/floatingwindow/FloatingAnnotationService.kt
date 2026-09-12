@@ -37,6 +37,8 @@ class FloatingAnnotationService : Service() {
     private var isAdded = false
     private var isDarkMode = false
     private var pendingTextPosition: Pair<Float, Float>? = null
+    private var toolbarView: LinearLayout? = null
+    private var selectedToolBtn: View? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -115,6 +117,7 @@ class FloatingAnnotationService : Service() {
         ))
 
         val toolbar = createToolbar()
+        toolbarView = toolbar
         rootView?.addView(toolbar, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -127,13 +130,17 @@ class FloatingAnnotationService : Service() {
         isAdded = true
     }
 
+    @SuppressLint("InflateParams")
     private fun showTextInputDialog() {
+        // Temporarily make overlay focusable so dialog can receive input
+        makeOverlayFocusable(true)
+
         val editText = EditText(this).apply {
             hint = getString(R.string.annotation_enter_text)
             setPadding(32, 24, 32, 24)
         }
 
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(getString(R.string.annotation_add_text))
             .setView(editText)
             .setPositiveButton(getString(R.string.confirm)) { _, _ ->
@@ -144,30 +151,66 @@ class FloatingAnnotationService : Service() {
                     }
                 }
                 pendingTextPosition = null
+                makeOverlayFocusable(false)
             }
             .setNegativeButton(getString(R.string.cancel)) { _, _ ->
                 pendingTextPosition = null
+                makeOverlayFocusable(false)
             }
-            .setOnDismissListener {
-                rootView?.requestLayout()
+            .setOnCancelListener {
+                pendingTextPosition = null
+                makeOverlayFocusable(false)
             }
-            .show()
+            .create()
+
+        // Critical fix: Set TYPE_APPLICATION_OVERLAY for dialog shown from Service
+        // Without this, BadTokenException crash occurs because Service has no window token
+        dialog.window?.setType(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+        )
+
+        dialog.show()
     }
 
-    private fun createToolbar(): View {
+    /**
+     * Toggle the overlay between focusable and not-focusable.
+     * Needed so that the text input dialog can receive soft keyboard input.
+     */
+    private fun makeOverlayFocusable(focusable: Boolean) {
+        if (layoutParams != null && rootView != null && isAdded) {
+            if (focusable) {
+                layoutParams!!.flags = layoutParams!!.flags and
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            } else {
+                layoutParams!!.flags = layoutParams!!.flags or
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            }
+            windowManager?.updateViewLayout(rootView, layoutParams)
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun createToolbar(): LinearLayout {
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(16, 8, 16, 8)
+            setPadding(12, 8, 12, 8)
             setBackgroundColor(
                 if (isDarkMode) ContextCompat.getColor(context, R.color.annotation_toolbar_bg_dark)
                 else ContextCompat.getColor(context, R.color.annotation_toolbar_bg_light)
             )
         }
 
+        // Tool buttons
         val tools = listOf(
             Triple(AnnotationOverlayView.AnnotationTool.PEN, R.drawable.ic_pen, getString(R.string.tool_pen)),
             Triple(AnnotationOverlayView.AnnotationTool.ARROW, R.drawable.ic_arrow, getString(R.string.tool_arrow)),
+            Triple(AnnotationOverlayView.AnnotationTool.RECTANGLE, R.drawable.ic_rectangle, getString(R.string.tool_rectangle)),
+            Triple(AnnotationOverlayView.AnnotationTool.CIRCLE, R.drawable.ic_circle, getString(R.string.tool_circle)),
             Triple(AnnotationOverlayView.AnnotationTool.TEXT, R.drawable.ic_text, getString(R.string.tool_text)),
         )
 
@@ -175,39 +218,136 @@ class FloatingAnnotationService : Service() {
             val btn = ImageView(this).apply {
                 setImageResource(iconRes)
                 contentDescription = desc
-                setPadding(12, 12, 12, 12)
+                setPadding(10, 10, 10, 10)
                 setOnClickListener {
                     annotationView?.setTool(tool)
+                    updateToolSelection(this)
                 }
             }
-            toolbar.addView(btn, LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx()))
+            if (tool == AnnotationOverlayView.AnnotationTool.PEN) {
+                selectedToolBtn = btn
+                highlightToolButton(btn, true)
+            }
+            toolbar.addView(btn, LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()))
         }
 
+        // Separator
+        val separator = View(this).apply {
+            setBackgroundColor(android.graphics.Color.parseColor("#33999999"))
+        }
+        toolbar.addView(separator, LinearLayout.LayoutParams(2.dpToPx(), 36.dpToPx()).apply {
+            marginStart = 6
+            marginEnd = 6
+        })
+
+        // Color buttons
+        val colors = AnnotationOverlayView.AnnotationColor.entries
+        colors.forEach { color ->
+            val btn = View(this).apply {
+                setBackgroundColor(color.colorInt)
+                contentDescription = color.displayName
+                val size = 24.dpToPx()
+                layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                    marginStart = 4
+                    marginEnd = 4
+                }
+                setOnClickListener {
+                    annotationView?.setColor(color)
+                    updateColorSelection(this@apply)
+                }
+            }
+            if (color == AnnotationOverlayView.AnnotationColor.GREEN) {
+                highlightColorButton(btn, true)
+            }
+            // Add border/stroke via background
+            val wrapper = FrameLayout(this).apply {
+                setPadding(2, 2, 2, 2)
+                addView(btn)
+            }
+            toolbar.addView(wrapper, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginStart = 2
+                marginEnd = 2
+            })
+        }
+
+        // Separator
+        val separator2 = View(this).apply {
+            setBackgroundColor(android.graphics.Color.parseColor("#33999999"))
+        }
+        toolbar.addView(separator2, LinearLayout.LayoutParams(2.dpToPx(), 36.dpToPx()).apply {
+            marginStart = 6
+            marginEnd = 6
+        })
+
+        // Undo button
         val undoBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_undo)
             contentDescription = getString(R.string.cd_undo)
-            setPadding(12, 12, 12, 12)
+            setPadding(10, 10, 10, 10)
             setOnClickListener { annotationView?.undo() }
         }
-        toolbar.addView(undoBtn, LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx()))
+        toolbar.addView(undoBtn, LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()))
 
+        // Clear button
         val clearBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_clear)
             contentDescription = getString(R.string.cd_clear_draw)
-            setPadding(12, 12, 12, 12)
+            setPadding(10, 10, 10, 10)
             setOnClickListener { annotationView?.clearAll() }
         }
-        toolbar.addView(clearBtn, LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx()))
+        toolbar.addView(clearBtn, LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()))
 
+        // Close button
         val closeBtn = ImageView(this).apply {
             setImageResource(R.drawable.ic_close)
             contentDescription = getString(R.string.cd_close)
-            setPadding(12, 12, 12, 12)
+            setPadding(10, 10, 10, 10)
             setOnClickListener { hideAnnotationOverlay() }
         }
-        toolbar.addView(closeBtn, LinearLayout.LayoutParams(48.dpToPx(), 48.dpToPx()))
+        toolbar.addView(closeBtn, LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()))
 
         return toolbar
+    }
+
+    private fun updateToolSelection(selectedBtn: View) {
+        highlightToolButton(selectedToolBtn, false)
+        highlightToolButton(selectedBtn, true)
+        selectedToolBtn = selectedBtn
+    }
+
+    private fun highlightToolButton(btn: View?, highlight: Boolean) {
+        btn?.let {
+            if (highlight) {
+                it.setBackgroundColor(
+                    if (isDarkMode) android.graphics.Color.parseColor("#44FFFFFF")
+                    else android.graphics.Color.parseColor("#442E7D32")
+                )
+            } else {
+                it.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            }
+        }
+    }
+
+    private var selectedColorView: View? = null
+
+    private fun updateColorSelection(selectedBtn: View) {
+        highlightColorButton(selectedColorView, false)
+        highlightColorButton(selectedBtn, true)
+        selectedColorView = selectedBtn
+    }
+
+    private fun highlightColorButton(btn: View?, highlight: Boolean) {
+        btn?.let {
+            val size = if (highlight) 28.dpToPx() else 24.dpToPx()
+            it.layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                marginStart = 0
+                marginEnd = 0
+            }
+            it.requestLayout()
+        }
     }
 
     private fun hideAnnotationOverlay() {
@@ -217,6 +357,9 @@ class FloatingAnnotationService : Service() {
         }
         rootView = null
         annotationView = null
+        toolbarView = null
+        selectedToolBtn = null
+        selectedColorView = null
     }
 
     private fun Int.dpToPx(): Int {
