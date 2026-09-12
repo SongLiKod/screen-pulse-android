@@ -288,7 +288,6 @@ class ScreenRecordService : Service() {
         val existing = MediaProjectionHolder.get()
         if (existing != null) {
             mediaProjection = existing
-            MediaProjectionHolder.unpark()
             bindProjectionStopListener()
             LogManager.log(LogManager.TAG_RECORD, "reusing held MediaProjection")
             return true
@@ -318,9 +317,13 @@ class ScreenRecordService : Service() {
 
     private fun bindProjectionStopListener() {
         MediaProjectionHolder.setOnStopped {
-            if (isRecording || countdownJob?.isActive == true) {
-                handleStop()
+            if (isStopping) return@setOnStopped
+            if (!isRecording && countdownJob?.isActive != true) {
+                LogManager.log(LogManager.TAG_RECORD, "MediaProjection onStop ignored during display setup")
+                return@setOnStopped
             }
+            LogManager.log(LogManager.TAG_RECORD, "MediaProjection stopped by system, ending session")
+            handleStop()
         }
     }
 
@@ -338,8 +341,8 @@ class ScreenRecordService : Service() {
             }
             RecordingStateManager.updateCountdown(0)
             sendCountdownToFloatingWindow(0)
-            // Hide fullscreen countdown overlay
             hideCountdownOverlay()
+            countdownJob = null
             startRecordingInternal()
         }
     }
@@ -392,7 +395,8 @@ class ScreenRecordService : Service() {
         // Android 14 (targetSdk 34) requires the mediaProjection foreground service
         // to be running BEFORE createVirtualDisplay() is called.
         startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        MediaProjectionHolder.unpark()
+        // Keep the countdown keep-alive VirtualDisplay until the real capture
+        // display is created. Releasing it first can stop MediaProjection.
 
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
@@ -450,7 +454,12 @@ class ScreenRecordService : Service() {
 
             setupMediaMuxer()
             setupMediaCodec(codecWidth, codecHeight)
-            setupVirtualDisplay(captureWidth, captureHeight, metrics.densityDpi)
+            MediaProjectionHolder.beginDisplayReplacement()
+            try {
+                setupVirtualDisplay(captureWidth, captureHeight, metrics.densityDpi)
+            } finally {
+                MediaProjectionHolder.endDisplayReplacement()
+            }
 
             // Set isRecording BEFORE starting encode loops so the while-loop condition passes.
             isRecording = true
@@ -647,21 +656,13 @@ class ScreenRecordService : Service() {
                 regionCropRenderer = null
                 recordWidth = width
                 recordHeight = height
-                virtualDisplay = try {
-                    mediaProjection?.createVirtualDisplay(
-                        "ScreenPulse",
-                        recordWidth,
-                        recordHeight,
-                        recordDensityDpi,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                        encoderInputSurface,
-                        null,
-                        null
-                    )
-                } catch (e: Exception) {
-                    LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
-                    throw e
-                }
+                virtualDisplay = createCaptureDisplay(
+                    "ScreenPulse",
+                    recordWidth,
+                    recordHeight,
+                    recordDensityDpi,
+                    encoderInputSurface
+                )
             } else {
                 // Set watermark if enabled
                 if (watermarkEnabled) {
@@ -679,45 +680,51 @@ class ScreenRecordService : Service() {
 
                 regionCropRenderer = renderer
                 LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: RegionCropRenderer initialized, creating VirtualDisplay at full screen ${width}x$height")
-                virtualDisplay = try {
-                    mediaProjection?.createVirtualDisplay(
-                        "ScreenPulse",
-                        width,
-                        height,
-                        densityDpi,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                        renderer.getInputSurface(),
-                        null,
-                        null
-                    )
-                } catch (e: Exception) {
-                    LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
-                    throw e
-                }
+                virtualDisplay = createCaptureDisplay(
+                    "ScreenPulse",
+                    width,
+                    height,
+                    densityDpi,
+                    renderer.getInputSurface()
+                )
             }
         } else {
             // Full screen mode without watermark: VirtualDisplay writes directly to encoder surface
             recordWidth = width
             recordHeight = height
             recordDensityDpi = densityDpi
-            virtualDisplay = try {
-                mediaProjection?.createVirtualDisplay(
-                    "ScreenPulse",
-                    recordWidth,
-                    recordHeight,
-                    recordDensityDpi,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    encoderInputSurface,
-                    null,
-                    null
-                )
-            } catch (e: Exception) {
-                LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
-                throw e
-            }
+            virtualDisplay = createCaptureDisplay(
+                "ScreenPulse",
+                recordWidth,
+                recordHeight,
+                recordDensityDpi,
+                encoderInputSurface
+            )
         }
 
         LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: complete, display=${virtualDisplay?.display?.displayId}, recordSize=${recordWidth}x${recordHeight}, cropRenderer=${regionCropRenderer != null}")
+    }
+
+    private fun createCaptureDisplay(
+        name: String,
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+        surface: Surface?
+    ): VirtualDisplay {
+        if (surface == null) {
+            throw RuntimeException("createCaptureDisplay FAILED: surface is null")
+        }
+        val display = try {
+            MediaProjectionHolder.adoptOrCreateDisplay(name, width, height, densityDpi, surface)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
+            throw e
+        }
+        if (display == null) {
+            throw RuntimeException("createCaptureDisplay FAILED: MediaProjection unavailable")
+        }
+        return display
     }
 
     private fun recreateVirtualDisplay() {
