@@ -18,8 +18,10 @@ import android.widget.ImageView
 import androidx.core.app.NotificationCompat
 import com.screenpulse.R
 import com.screenpulse.service.ScreenRecordService
+import com.screenpulse.ui.MainActivity
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.ProjectionRequestBus
 
 class FloatingWindowService : Service() {
 
@@ -231,11 +233,17 @@ class FloatingWindowService : Service() {
     private fun handleClick() {
         when (currentState) {
             RecordingState.IDLE -> {
-                LogManager.log(LogManager.TAG_FLOAT, "click: idle -> request MediaProjection from Activity")
-                val intent = Intent(com.screenpulse.util.ProjectionRequestBus.REQUEST_PROJECTION_ACTION).apply {
-                    setPackage(packageName)
+                LogManager.log(LogManager.TAG_FLOAT, "click: idle -> launch Activity to request MediaProjection")
+                // Directly launch MainActivity instead of sending a broadcast.
+                // When the app is in the background, the BroadcastReceiver registered in
+                // MainActivity.onStart() has been unregistered (in onStop()), so the broadcast
+                // would be lost. Starting the Activity directly brings it to the foreground
+                // and triggers the recording flow via onNewIntent() / onCreate() intent check.
+                val intent = Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    action = ProjectionRequestBus.REQUEST_PROJECTION_ACTION
                 }
-                sendBroadcast(intent)
+                startActivity(intent)
             }
             RecordingState.RECORDING -> {
                 LogManager.log(LogManager.TAG_FLOAT, "click: pause recording")
