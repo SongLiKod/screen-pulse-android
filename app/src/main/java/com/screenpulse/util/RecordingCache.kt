@@ -2,8 +2,13 @@ package com.screenpulse.util
 
 import android.content.Context
 import android.content.Intent
+import com.screenpulse.ScreenPulseApp
 import com.screenpulse.repository.BitrateMode
+import com.screenpulse.repository.RecordMode
+import com.screenpulse.repository.SettingsRepository
 import com.screenpulse.service.ScreenRecordService
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 /**
  * Caches the MediaProjection authorization result and recording configuration
@@ -74,18 +79,89 @@ object RecordingCache {
     }
 
     /**
-     * Creates a ScreenRecordService ACTION_START intent from the cached data.
-     * Returns null if the cache is invalid.
+     * Reloads recording parameters from SettingsRepository so the floating window
+     * always starts with the latest user configuration.
      */
-    fun createStartIntent(context: Context): Intent? {
-        val data = _resultData ?: return null
+    fun refreshConfigFromSettings(context: Context) {
+        val appContext = context.applicationContext
+        val repo = (appContext as? ScreenPulseApp)?.settingsRepository
+            ?: SettingsRepository(appContext)
+        val latest = runBlocking {
+            val audioMode = repo.audioMode.first()
+            val recordMode = repo.recordMode.first()
+            val countdownMode = repo.countdownMode.first()
+            val customCountdownSeconds = repo.customCountdownSeconds.first()
+            val resolution = repo.resolution.first()
+            val frameRate = repo.frameRate.first()
+            val bitrate = repo.bitrate.first()
+            val bitrateMode = repo.bitrateMode.first()
+            val compressionMode = repo.compressionMode.first()
+            val systemVolume = repo.systemVolume.first()
+            val micVolume = repo.micVolume.first()
+            val watermarkEnabled = repo.watermarkEnabled.first()
+            val watermarkText = repo.watermarkText.first()
+            val watermarkType = repo.watermarkType.first()
+            val watermarkImageUri = repo.watermarkImageUri.first()
+            val pipEnabled = repo.pipEnabled.first()
+            val pipSize = repo.pipSize.first()
+            val customResolutionWidth = repo.customResolutionWidth.first()
+            val customResolutionHeight = repo.customResolutionHeight.first()
+            val customRegion = repo.customRegion.first()
+            val customSaveTreeUri = repo.customSaveTreeUri.first()
+            val floatingWindowPersistent = repo.floatingWindowPersistent.first()
+            Config(
+                audioMode = audioMode.value,
+                recordMode = recordMode.value,
+                countdownMode = countdownMode.value,
+                customCountdownSeconds = customCountdownSeconds,
+                resolution = resolution.value,
+                frameRate = frameRate.value,
+                bitrate = bitrate,
+                bitrateMode = bitrateMode.value,
+                compressionMode = compressionMode.value,
+                systemVolume = systemVolume,
+                micVolume = micVolume,
+                watermarkEnabled = watermarkEnabled,
+                watermarkText = watermarkText,
+                watermarkType = watermarkType.value,
+                watermarkImageUri = watermarkImageUri,
+                pipEnabled = pipEnabled,
+                pipSize = pipSize,
+                customResolutionWidth = customResolutionWidth,
+                customResolutionHeight = customResolutionHeight,
+                regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegion.width else 0,
+                regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegion.height else 0,
+                regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegion.offsetX else 0,
+                regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegion.offsetY else 0,
+                customSaveTreeUri = customSaveTreeUri,
+                floatingWindowPersistent = floatingWindowPersistent
+            )
+        }
+        _config = latest
+        LogManager.log(LogManager.TAG_FLOAT, "RecordingCache config refreshed from settings")
+    }
+
+    /**
+     * Creates a ScreenRecordService ACTION_START intent from the current config.
+     * resultCode/resultData are optional when a live MediaProjection is already held.
+     */
+    fun createStartIntent(
+        context: Context,
+        resultCode: Int? = null,
+        resultData: Intent? = null
+    ): Intent {
+        refreshConfigFromSettings(context)
         val c = _config
         val effectiveBitrate = if (c.bitrateMode == BitrateMode.SMART.value) 0 else c.bitrate
+        val code = resultCode ?: _resultCode
+        val data = resultData ?: _resultData
 
         return Intent(context, ScreenRecordService::class.java).apply {
             action = ScreenRecordService.ACTION_START
-            putExtra(ScreenRecordService.EXTRA_RESULT_CODE, _resultCode)
-            putExtra(ScreenRecordService.EXTRA_RESULT_DATA, data)
+            putExtra(ScreenRecordService.EXTRA_RESULT_CODE, code)
+            if (data != null) {
+                putExtra(ScreenRecordService.EXTRA_RESULT_DATA, data)
+            }
             putExtra(ScreenRecordService.EXTRA_AUDIO_MODE, c.audioMode)
             putExtra(ScreenRecordService.EXTRA_RECORD_MODE, c.recordMode)
             putExtra(ScreenRecordService.EXTRA_COUNTDOWN, c.countdownMode)

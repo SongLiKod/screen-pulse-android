@@ -159,7 +159,7 @@
     <string name="pip_size_format">画中画窗口大小：%1$sdp</string>
 
     <string name="floating_window_persistent">悬浮窗常驻</string>
-    <string name="floating_window_persistent_desc">未录制时也显示悬浮控制按钮，可在任意界面点击开始录制</string>
+    <string name="floating_window_persistent_desc">未录制时也显示悬浮控制按钮，点击后按当前配置直接开始录制，不再打开应用界面</string>
 
     <string name="battery_disable">去关闭</string>
     <string name="battery_later">稍后</string>

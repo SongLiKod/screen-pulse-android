@@ -44,6 +44,16 @@
             android:name=".ui.regionselect.RegionSelectActivity"
             android:theme="@style/Theme.ScreenPulse.Transparent" />
 
+        <activity
+            android:name=".ui.ProjectionConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:finishOnTaskLaunch="true"
+            android:launchMode="singleInstance"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.ScreenPulse.Transparent" />
+
         <service
             android:name=".service.ScreenRecordService"
             android:exported="false"

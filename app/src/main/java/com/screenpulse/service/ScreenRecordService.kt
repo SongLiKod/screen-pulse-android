@@ -57,6 +57,7 @@ import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.jni.NativeBridge
 import com.screenpulse.shortcut.RecordingStateManager
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.MediaProjectionHolder
 import com.screenpulse.util.RecordingCache
 import kotlinx.coroutines.*
 import java.io.File
@@ -206,6 +207,11 @@ class ScreenRecordService : Service() {
         }
         LogManager.log(LogManager.TAG_RECORD, "handleStart resultCode=$resultCode resultData=${resultData != null}")
 
+        if (isRecording || countdownJob?.isActive == true) {
+            LogManager.log(LogManager.TAG_RECORD, "handleStart ignored: already recording or counting down")
+            return
+        }
+
         // CRITICAL: Call startForeground() immediately on Android 14+.
         // The system kills services that don't call startForeground() within ~5 seconds
         // of onStartCommand(). When a countdown is enabled, startRecordingInternal()
@@ -213,24 +219,24 @@ class ScreenRecordService : Service() {
         // potentially exceeding the timeout. Calling it here ensures the service stays alive.
         startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
 
-        // Validate MediaProjection authorization before proceeding.
-        // Without valid resultData, recording cannot start — fail fast instead of
-        // running a countdown that will never lead to recording.
-        if (resultData == null) {
-            LogManager.log(LogManager.TAG_RECORD, "handleStart FAILED: resultData is null, cannot start recording")
+        // Reset stale stopping flag from a previous recording that hasn't fully cleaned up.
+        // Without this, startRecordingInternal() would bail out because isStopping == true.
+        if (isStopping) {
+            LogManager.log(LogManager.TAG_RECORD, "handleStart: resetting stale isStopping flag")
+            isStopping = false
+        }
+
+        // Obtain MediaProjection immediately after consent. Android 14+ invalidates the
+        // token if getMediaProjection() is delayed until after countdown, or if a previous
+        // projection was already stopped. Keep the live instance in MediaProjectionHolder.
+        if (!obtainMediaProjection(resultCode, resultData)) {
+            LogManager.log(LogManager.TAG_RECORD, "handleStart FAILED: MediaProjection unavailable")
             RecordingCache.clear()
             RecordingStateManager.updateState(RecordingState.IDLE)
             syncFloatingWindow(RecordingState.IDLE)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
-        }
-
-        // Reset stale stopping flag from a previous recording that hasn't fully cleaned up.
-        // Without this, startRecordingInternal() would bail out because isStopping == true.
-        if (isStopping) {
-            LogManager.log(LogManager.TAG_RECORD, "handleStart: resetting stale isStopping flag")
-            isStopping = false
         }
 
         currentResolution = Resolution.fromValue(intent.getStringExtra(EXTRA_RESOLUTION) ?: "1080P")
@@ -264,15 +270,61 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateState(RecordingState.COUNTDOWN)
             syncFloatingWindow(RecordingState.COUNTDOWN)
             stateCallback?.onStateChanged(RecordingState.COUNTDOWN)
-            // Show fullscreen countdown overlay
+            // Keep a dummy VirtualDisplay so the projection stays valid during countdown.
+            MediaProjectionHolder.park()
             startCountdownOverlay()
-            startCountdown(countdownSeconds, resultCode, resultData)
+            startCountdown(countdownSeconds)
         } else {
-            startRecordingInternal(resultCode, resultData)
+            startRecordingInternal()
         }
     }
 
-    private fun startCountdown(seconds: Int, resultCode: Int, resultData: Intent?) {
+    /**
+     * Obtains a live MediaProjection immediately after user consent.
+     * Reuses MediaProjectionHolder when already attached so the floating window
+     * can start subsequent recordings without opening the app.
+     */
+    private fun obtainMediaProjection(resultCode: Int, resultData: Intent?): Boolean {
+        val existing = MediaProjectionHolder.get()
+        if (existing != null) {
+            mediaProjection = existing
+            MediaProjectionHolder.unpark()
+            bindProjectionStopListener()
+            LogManager.log(LogManager.TAG_RECORD, "reusing held MediaProjection")
+            return true
+        }
+        if (resultData == null) {
+            LogManager.log(LogManager.TAG_RECORD, "obtainMediaProjection FAILED: resultData is null")
+            return false
+        }
+        val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val created = try {
+            projectionManager.getMediaProjection(resultCode, resultData)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "getMediaProjection FAILED", e)
+            e.printStackTrace()
+            return false
+        }
+        if (created == null) {
+            LogManager.log(LogManager.TAG_RECORD, "getMediaProjection returned null")
+            return false
+        }
+        MediaProjectionHolder.attach(created)
+        bindProjectionStopListener()
+        mediaProjection = created
+        LogManager.log(LogManager.TAG_RECORD, "getMediaProjection OK")
+        return true
+    }
+
+    private fun bindProjectionStopListener() {
+        MediaProjectionHolder.setOnStopped {
+            if (isRecording || countdownJob?.isActive == true) {
+                handleStop()
+            }
+        }
+    }
+
+    private fun startCountdown(seconds: Int) {
         countdownJob?.cancel()
         countdownJob = serviceScope.launch {
             for (i in seconds downTo 1) {
@@ -288,7 +340,7 @@ class ScreenRecordService : Service() {
             sendCountdownToFloatingWindow(0)
             // Hide fullscreen countdown overlay
             hideCountdownOverlay()
-            startRecordingInternal(resultCode, resultData)
+            startRecordingInternal()
         }
     }
 
@@ -326,9 +378,9 @@ class ScreenRecordService : Service() {
         }
     }
 
-    private fun startRecordingInternal(resultCode: Int, resultData: Intent?) {
-        if (resultData == null) {
-            LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal FAILED: resultData is null")
+    private fun startRecordingInternal() {
+        if (mediaProjection == null && !obtainMediaProjection(-1, null)) {
+            LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal FAILED: MediaProjection unavailable")
             RecordingCache.clear()
             RecordingStateManager.updateState(RecordingState.IDLE)
             syncFloatingWindow(RecordingState.IDLE)
@@ -338,37 +390,9 @@ class ScreenRecordService : Service() {
         }
 
         // Android 14 (targetSdk 34) requires the mediaProjection foreground service
-        // to be running BEFORE getMediaProjection()/createVirtualDisplay() are called.
+        // to be running BEFORE createVirtualDisplay() is called.
         startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-
-        val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = try {
-            projectionManager.getMediaProjection(resultCode, resultData)
-        } catch (e: Exception) {
-            LogManager.log(LogManager.TAG_RECORD, "getMediaProjection FAILED", e)
-            e.printStackTrace()
-            // Clear the cached MediaProjection authorization since it's invalid,
-            // so the floating window won't try to use it again.
-            RecordingCache.clear()
-            RecordingStateManager.updateState(RecordingState.IDLE)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
-        LogManager.log(LogManager.TAG_RECORD, "getMediaProjection OK")
-
-        // Android 14+ requires registering a callback before createVirtualDisplay
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
-                override fun onStop() {
-                    LogManager.log(LogManager.TAG_RECORD, "MediaProjection stopped by system")
-                    if (isRecording) {
-                        handleStop()
-                    }
-                }
-            }, Handler(Looper.getMainLooper()))
-            LogManager.log(LogManager.TAG_RECORD, "MediaProjection callback registered (Android 14+)")
-        }
+        MediaProjectionHolder.unpark()
 
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
@@ -1473,9 +1497,8 @@ class ScreenRecordService : Service() {
             }
         }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: file sync failed", it) }
 
-        // Stop the MediaProjection so the system screen-share indicator is dismissed.
-        runCatching { mediaProjection?.stop() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaProjection stop failed", it) }
         mediaProjection = null
+        MediaProjectionHolder.clear()
 
         runCatching { NativeBridge.nativeRelease() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: nativeRelease failed", it) }
 

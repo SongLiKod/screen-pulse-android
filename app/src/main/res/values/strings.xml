@@ -159,7 +159,7 @@
     <string name="pip_size_format">PiP Window Size: %1$sdp</string>
 
     <string name="floating_window_persistent">Persistent Floating Window</string>
-    <string name="floating_window_persistent_desc">Show floating control when not recording, tap to start from any screen</string>
+    <string name="floating_window_persistent_desc">Show floating control when not recording. Tap it to start with current settings without opening the app</string>
 
     <string name="battery_disable">Disable</string>
     <string name="battery_later">Later</string>

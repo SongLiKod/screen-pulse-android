@@ -39,7 +39,9 @@ import com.screenpulse.ui.regionselect.RegionSelectActivity
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.viewmodel.RecordingViewModel
 import com.screenpulse.viewmodel.SettingsViewModel
+import androidx.core.content.ContextCompat
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.MediaProjectionHolder
 import com.screenpulse.util.ProjectionRequestBus
 import com.screenpulse.util.RecordingCache
 import kotlinx.coroutines.delay
@@ -267,6 +269,15 @@ fun HomeScreen(
     }
 
     fun requestRecording() {
+        if (MediaProjectionHolder.isActive) {
+            LogManager.log(LogManager.TAG_UI, "Record button: MediaProjection already held, start directly")
+            ContextCompat.startForegroundService(context, RecordingCache.createStartIntent(context))
+            if (pipEnabled) {
+                startPipOverlay(context, pipSize)
+            }
+            startFloatingWindow(context, floatingWindowPersistent)
+            return
+        }
         val permissions = PermissionManager.getRequiredPermissions()
         val needsPermission = permissions.any { perm ->
             androidx.core.content.ContextCompat.checkSelfPermission(
@@ -750,7 +761,7 @@ private fun startRecording(
         putExtra(ScreenRecordService.EXTRA_CUSTOM_SAVE_TREE_URI, customSaveTreeUri)
         putExtra(ScreenRecordService.EXTRA_FLOATING_WINDOW_PERSISTENT, floatingWindowPersistent)
     }
-    context.startService(intent)
+    ContextCompat.startForegroundService(context, intent)
 }
 
 private fun startFloatingWindow(context: Context, persistent: Boolean = false) {

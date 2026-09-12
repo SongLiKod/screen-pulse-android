@@ -6,7 +6,6 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
@@ -18,11 +17,9 @@ import android.widget.ImageView
 import androidx.core.app.NotificationCompat
 import com.screenpulse.R
 import com.screenpulse.service.ScreenRecordService
-import com.screenpulse.ui.MainActivity
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.util.LogManager
-import com.screenpulse.util.ProjectionRequestBus
-import com.screenpulse.util.RecordingCache
+import com.screenpulse.util.OverlayRecordingStarter
 
 class FloatingWindowService : Service() {
 
@@ -234,30 +231,8 @@ class FloatingWindowService : Service() {
     private fun handleClick() {
         when (currentState) {
             RecordingState.IDLE -> {
-                if (RecordingCache.isValid) {
-                    // Cache has a valid MediaProjection authorization — start recording
-                    // directly without opening the app UI.
-                    LogManager.log(LogManager.TAG_FLOAT, "click: idle -> start recording directly from cache")
-                    val startIntent = RecordingCache.createStartIntent(this)
-                    if (startIntent != null) {
-                        startService(startIntent)
-                        // Start PIP overlay if enabled in cached config
-                        if (RecordingCache.config.pipEnabled) {
-                            val pipIntent = Intent(this, FloatingPipService::class.java).apply {
-                                action = FloatingPipService.ACTION_SHOW
-                                putExtra(FloatingPipService.EXTRA_SIZE, RecordingCache.config.pipSize)
-                            }
-                            startService(pipIntent)
-                        }
-                    } else {
-                        LogManager.log(LogManager.TAG_FLOAT, "click: idle -> cache invalid, fallback to Activity")
-                        launchActivityForProjection()
-                    }
-                } else {
-                    // No cached authorization — must open the app to request MediaProjection.
-                    LogManager.log(LogManager.TAG_FLOAT, "click: idle -> no cache, launch Activity for projection")
-                    launchActivityForProjection()
-                }
+                LogManager.log(LogManager.TAG_FLOAT, "click: idle -> start recording from overlay")
+                OverlayRecordingStarter.start(this)
             }
             RecordingState.RECORDING -> {
                 LogManager.log(LogManager.TAG_FLOAT, "click: pause recording")
@@ -273,18 +248,6 @@ class FloatingWindowService : Service() {
             }
             RecordingState.COUNTDOWN -> return
         }
-    }
-
-    /**
-     * Launch MainActivity to request MediaProjection authorization.
-     * Used as a fallback when RecordingCache has no valid authorization.
-     */
-    private fun launchActivityForProjection() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            action = ProjectionRequestBus.REQUEST_PROJECTION_ACTION
-        }
-        startActivity(intent)
     }
 
     private fun updateDuration(durationMs: Long) {
