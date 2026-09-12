@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.screenpulse.floatingwindow.FloatingPipService
+import com.screenpulse.repository.RecordMode
 import com.screenpulse.ui.ProjectionConsentActivity
+import com.screenpulse.ui.regionselect.RegionSelectActivity
 
 /**
  * Starts recording from overlay / shortcut using the latest saved settings.
@@ -14,7 +16,22 @@ import com.screenpulse.ui.ProjectionConsentActivity
 object OverlayRecordingStarter {
 
     fun start(context: Context) {
-        RecordingCache.refreshConfigFromSettings(context)
+        RecordingCache.ensureConfigLoaded(context)
+        if (RecordingCache.config.recordMode == RecordMode.CUSTOM_REGION.value) {
+            LogManager.log(LogManager.TAG_FLOAT, "OverlayRecordingStarter: select region first")
+            val selectIntent = Intent(context, RegionSelectActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_NO_ANIMATION or
+                    Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                putExtra(RegionSelectActivity.EXTRA_START_RECORDING, true)
+            }
+            context.startActivity(selectIntent)
+            return
+        }
+        startCapture(context)
+    }
+
+    fun startCapture(context: Context) {
         if (MediaProjectionHolder.isActive) {
             LogManager.log(LogManager.TAG_FLOAT, "OverlayRecordingStarter: start with held MediaProjection")
             ContextCompat.startForegroundService(context, RecordingCache.createStartIntent(context))

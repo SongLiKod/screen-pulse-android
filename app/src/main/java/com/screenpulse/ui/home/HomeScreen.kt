@@ -3,7 +3,6 @@ package com.screenpulse.ui.home
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,10 +29,8 @@ import com.screenpulse.floatingwindow.FloatingWindowService
 import com.screenpulse.permission.PermissionManager
 import com.screenpulse.R
 import com.screenpulse.repository.AudioMode
-import com.screenpulse.repository.CountdownMode
 import com.screenpulse.repository.CustomRegion
 import com.screenpulse.repository.RecordMode
-import com.screenpulse.repository.WatermarkType
 import com.screenpulse.service.ScreenRecordService
 import com.screenpulse.ui.regionselect.RegionSelectActivity
 import com.screenpulse.viewmodel.RecordingState
@@ -42,6 +39,7 @@ import com.screenpulse.viewmodel.SettingsViewModel
 import androidx.core.content.ContextCompat
 import com.screenpulse.util.LogManager
 import com.screenpulse.util.MediaProjectionHolder
+import com.screenpulse.util.OverlayRecordingStarter
 import com.screenpulse.util.ProjectionRequestBus
 import com.screenpulse.util.RecordingCache
 import kotlinx.coroutines.delay
@@ -58,30 +56,15 @@ fun HomeScreen(
     onNavigateToLogs: () -> Unit
 ) {
     val context = LocalContext.current
-    val activity = context as? Activity
     val recordingState by recordingViewModel.recordingState.collectAsState()
     val duration by recordingViewModel.recordingDuration.collectAsState()
     val countdown by recordingViewModel.countdownRemaining.collectAsState()
     val audioMode by settingsViewModel.audioMode.collectAsState()
     val recordMode by settingsViewModel.recordMode.collectAsState()
-    val countdownMode by settingsViewModel.countdownMode.collectAsState()
     val resolution by settingsViewModel.resolution.collectAsState()
     val frameRate by settingsViewModel.frameRate.collectAsState()
-    val bitrate by settingsViewModel.bitrate.collectAsState()
-    val compressionMode by settingsViewModel.compressionMode.collectAsState()
-    val systemVolume by settingsViewModel.systemVolume.collectAsState()
-    val micVolume by settingsViewModel.micVolume.collectAsState()
-    val watermarkEnabled by settingsViewModel.watermarkEnabled.collectAsState()
-    val watermarkText by settingsViewModel.watermarkText.collectAsState()
-    val watermarkType by settingsViewModel.watermarkType.collectAsState()
-    val watermarkImageUri by settingsViewModel.watermarkImageUri.collectAsState()
     val pipEnabled by settingsViewModel.pipEnabled.collectAsState()
     val pipSize by settingsViewModel.pipSize.collectAsState()
-    val bitrateMode by settingsViewModel.bitrateMode.collectAsState()
-    val customResolutionWidth by settingsViewModel.customResolutionWidth.collectAsState()
-    val customResolutionHeight by settingsViewModel.customResolutionHeight.collectAsState()
-    val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
-    val customCountdownSeconds by settingsViewModel.customCountdownSeconds.collectAsState()
     val floatingWindowPersistent by settingsViewModel.floatingWindowPersistent.collectAsState()
 
     var previousState by remember { mutableStateOf(RecordingState.IDLE) }
@@ -120,7 +103,6 @@ fun HomeScreen(
         }
     }
 
-    val customRegionData by settingsViewModel.customRegion.collectAsState()
     val shouldNavigateToVideoList by recordingViewModel.navigateToVideoList.collectAsState()
 
     // Navigate to video list when recording completes
@@ -148,72 +130,13 @@ fun HomeScreen(
                     putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data!!)
                 })
             } else {
-                // Cache the MediaProjection authorization and recording config
-                // so the floating window can start recording directly without opening the app.
-                RecordingCache.save(
-                    code = result.resultCode,
-                    data = result.data!!,
-                    config = RecordingCache.Config(
-                        audioMode = audioMode.value,
-                        recordMode = recordMode.value,
-                        countdownMode = countdownMode.value,
-                        customCountdownSeconds = customCountdownSeconds,
-                        resolution = resolution.value,
-                        frameRate = frameRate.value,
-                        bitrate = bitrate,
-                        bitrateMode = bitrateMode.value,
-                        compressionMode = compressionMode.value,
-                        systemVolume = systemVolume,
-                        micVolume = micVolume,
-                        watermarkEnabled = watermarkEnabled,
-                        watermarkText = watermarkText,
-                        watermarkType = watermarkType.value,
-                        watermarkImageUri = watermarkImageUri,
-                        pipEnabled = pipEnabled,
-                        pipSize = pipSize,
-                        customResolutionWidth = customResolutionWidth,
-                        customResolutionHeight = customResolutionHeight,
-                        regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
-                        regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
-                        regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
-                        regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
-                        customSaveTreeUri = customSaveTreeUri,
-                        floatingWindowPersistent = floatingWindowPersistent
-                    )
-                )
-                startRecording(
-                    context = context,
-                    resultCode = result.resultCode,
-                    resultData = result.data!!,
-                    audioMode = audioMode,
-                    recordMode = recordMode,
-                    countdownMode = countdownMode,
-                    customCountdownSeconds = customCountdownSeconds,
-                    resolution = resolution,
-                    frameRate = frameRate,
-                    bitrate = bitrate,
-                    bitrateMode = bitrateMode,
-                    compressionMode = compressionMode,
-                    systemVolume = systemVolume,
-                    micVolume = micVolume,
-                    watermarkEnabled = watermarkEnabled,
-                    watermarkText = watermarkText,
-                    watermarkType = watermarkType,
-                    watermarkImageUri = watermarkImageUri,
-                    customResolutionWidth = customResolutionWidth,
-                    customResolutionHeight = customResolutionHeight,
-                    regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
-                    regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
-                    regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
-                    regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
-                    customSaveTreeUri = customSaveTreeUri,
-                    floatingWindowPersistent = floatingWindowPersistent,
-                    settingsViewModel = settingsViewModel
+                RecordingCache.saveAuthorization(result.resultCode, result.data!!)
+                ContextCompat.startForegroundService(
+                    context,
+                    RecordingCache.createStartIntent(context, result.resultCode, result.data)
                 )
                 startFloatingWindow(context, floatingWindowPersistent)
-                if (pipEnabled) {
-                    startPipOverlay(context, pipSize)
-                }
+                OverlayRecordingStarter.startPipIfEnabled(context)
             }
         }
     }
@@ -231,8 +154,17 @@ fun HomeScreen(
                 offsetY = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)
             )
             settingsViewModel.setCustomRegion(region)
+            RecordingCache.applyRegion(region)
             LogManager.log(LogManager.TAG_UI, "Region selected: ${region.offsetX},${region.offsetY} ${region.width}x${region.height} -> asking MediaProjection")
-            mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+            if (MediaProjectionHolder.isActive) {
+                OverlayRecordingStarter.startCapture(context)
+                if (pipEnabled) {
+                    startPipOverlay(context, pipSize)
+                }
+                startFloatingWindow(context, floatingWindowPersistent)
+            } else {
+                mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+            }
         } else {
             LogManager.log(LogManager.TAG_UI, "Region selection cancelled by user")
         }
@@ -269,7 +201,7 @@ fun HomeScreen(
     }
 
     fun requestRecording() {
-        if (MediaProjectionHolder.isActive) {
+        if (MediaProjectionHolder.isActive && recordMode != RecordMode.CUSTOM_REGION) {
             LogManager.log(LogManager.TAG_UI, "Record button: MediaProjection already held, start directly")
             ContextCompat.startForegroundService(context, RecordingCache.createStartIntent(context))
             if (pipEnabled) {
@@ -698,70 +630,6 @@ private fun formatDuration(durationMs: Long): String {
     } else {
         String.format("%02d:%02d", minutes, seconds)
     }
-}
-
-private fun startRecording(
-    context: Context,
-    resultCode: Int,
-    resultData: Intent,
-    audioMode: AudioMode,
-    recordMode: RecordMode,
-    countdownMode: CountdownMode,
-    resolution: com.screenpulse.repository.Resolution,
-    frameRate: com.screenpulse.repository.FrameRate,
-    bitrate: Int,
-    bitrateMode: com.screenpulse.repository.BitrateMode,
-    compressionMode: com.screenpulse.repository.CompressionMode,
-    systemVolume: Int,
-    micVolume: Int,
-    watermarkEnabled: Boolean,
-    watermarkText: String,
-    watermarkType: WatermarkType,
-    watermarkImageUri: String,
-    customResolutionWidth: Int,
-    customResolutionHeight: Int,
-    customCountdownSeconds: Int,
-    regionWidth: Int,
-    regionHeight: Int,
-    regionOffsetX: Int,
-    regionOffsetY: Int,
-    customSaveTreeUri: String,
-    floatingWindowPersistent: Boolean,
-    settingsViewModel: SettingsViewModel
-) {
-    val effectiveBitrate = if (bitrateMode == com.screenpulse.repository.BitrateMode.SMART) {
-        0
-    } else {
-        bitrate
-    }
-    val intent = Intent(context, ScreenRecordService::class.java).apply {
-        action = ScreenRecordService.ACTION_START
-        putExtra(ScreenRecordService.EXTRA_RESULT_CODE, resultCode)
-        putExtra(ScreenRecordService.EXTRA_RESULT_DATA, resultData)
-        putExtra(ScreenRecordService.EXTRA_AUDIO_MODE, audioMode.value)
-        putExtra(ScreenRecordService.EXTRA_RECORD_MODE, recordMode.value)
-        putExtra(ScreenRecordService.EXTRA_COUNTDOWN, countdownMode.value)
-        putExtra(ScreenRecordService.EXTRA_CUSTOM_COUNTDOWN_SECONDS, customCountdownSeconds)
-        putExtra(ScreenRecordService.EXTRA_RESOLUTION, resolution.value)
-        putExtra(ScreenRecordService.EXTRA_FRAME_RATE, frameRate.value)
-        putExtra(ScreenRecordService.EXTRA_BITRATE, effectiveBitrate)
-        putExtra(ScreenRecordService.EXTRA_COMPRESSION_MODE, compressionMode.value)
-        putExtra(ScreenRecordService.EXTRA_SYSTEM_VOLUME, systemVolume)
-        putExtra(ScreenRecordService.EXTRA_MIC_VOLUME, micVolume)
-        putExtra(ScreenRecordService.EXTRA_WATERMARK_ENABLED, watermarkEnabled)
-        putExtra(ScreenRecordService.EXTRA_WATERMARK_TEXT, watermarkText)
-        putExtra(ScreenRecordService.EXTRA_WATERMARK_TYPE, watermarkType.value)
-        putExtra(ScreenRecordService.EXTRA_WATERMARK_IMAGE_URI, watermarkImageUri)
-        putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_WIDTH, customResolutionWidth)
-        putExtra(ScreenRecordService.EXTRA_CUSTOM_RESOLUTION_HEIGHT, customResolutionHeight)
-        putExtra(ScreenRecordService.EXTRA_CUSTOM_WIDTH, regionWidth)
-        putExtra(ScreenRecordService.EXTRA_CUSTOM_HEIGHT, regionHeight)
-        putExtra(ScreenRecordService.EXTRA_CUSTOM_OFFSET_X, regionOffsetX)
-        putExtra(ScreenRecordService.EXTRA_CUSTOM_OFFSET_Y, regionOffsetY)
-        putExtra(ScreenRecordService.EXTRA_CUSTOM_SAVE_TREE_URI, customSaveTreeUri)
-        putExtra(ScreenRecordService.EXTRA_FLOATING_WINDOW_PERSISTENT, floatingWindowPersistent)
-    }
-    ContextCompat.startForegroundService(context, intent)
 }
 
 private fun startFloatingWindow(context: Context, persistent: Boolean = false) {

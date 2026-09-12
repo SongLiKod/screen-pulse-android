@@ -16,6 +16,9 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.screenpulse.R
+import com.screenpulse.repository.CustomRegion
+import com.screenpulse.util.OverlayRecordingStarter
+import com.screenpulse.util.RecordingCache
 
 class RegionSelectActivity : Activity() {
 
@@ -24,6 +27,7 @@ class RegionSelectActivity : Activity() {
         const val EXTRA_REGION_Y = "region_y"
         const val EXTRA_REGION_WIDTH = "region_width"
         const val EXTRA_REGION_HEIGHT = "region_height"
+        const val EXTRA_START_RECORDING = "start_recording"
     }
 
     private var startX = 0f
@@ -49,13 +53,25 @@ class RegionSelectActivity : Activity() {
         val confirmBtn = Button(this).apply {
             text = getString(R.string.confirm)
             setOnClickListener {
+                val region = CustomRegion(
+                    width = currentRect.width().toInt(),
+                    height = currentRect.height().toInt(),
+                    offsetX = currentRect.left.toInt(),
+                    offsetY = currentRect.top.toInt()
+                )
                 val resultIntent = Intent().apply {
-                    putExtra(EXTRA_REGION_X, currentRect.left.toInt())
-                    putExtra(EXTRA_REGION_Y, currentRect.top.toInt())
-                    putExtra(EXTRA_REGION_WIDTH, currentRect.width().toInt())
-                    putExtra(EXTRA_REGION_HEIGHT, currentRect.height().toInt())
+                    putExtra(EXTRA_REGION_X, region.offsetX)
+                    putExtra(EXTRA_REGION_Y, region.offsetY)
+                    putExtra(EXTRA_REGION_WIDTH, region.width)
+                    putExtra(EXTRA_REGION_HEIGHT, region.height)
                 }
                 setResult(RESULT_OK, resultIntent)
+                if (intent.getBooleanExtra(EXTRA_START_RECORDING, false) &&
+                    region.width > 0 && region.height > 0
+                ) {
+                    RecordingCache.applyRegion(region)
+                    OverlayRecordingStarter.startCapture(this@RegionSelectActivity)
+                }
                 finish()
             }
         }

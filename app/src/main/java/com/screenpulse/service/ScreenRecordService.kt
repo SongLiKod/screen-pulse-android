@@ -115,6 +115,7 @@ class ScreenRecordService : Service() {
     @Volatile private var isRecording = false
     @Volatile private var isPaused = false
     @Volatile private var isStopping = false
+    @Volatile private var isStarting = false
     private var recordingStartTime = 0L
     private var pausedDuration = 0L
     private var totalPausedDuration = 0L
@@ -225,12 +226,14 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "handleStart: resetting stale isStopping flag")
             isStopping = false
         }
+        isStarting = true
 
         // Obtain MediaProjection immediately after consent. Android 14+ invalidates the
         // token if getMediaProjection() is delayed until after countdown, or if a previous
         // projection was already stopped. Keep the live instance in MediaProjectionHolder.
         if (!obtainMediaProjection(resultCode, resultData)) {
             LogManager.log(LogManager.TAG_RECORD, "handleStart FAILED: MediaProjection unavailable")
+            isStarting = false
             RecordingCache.clear()
             RecordingStateManager.updateState(RecordingState.IDLE)
             syncFloatingWindow(RecordingState.IDLE)
@@ -270,8 +273,17 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateState(RecordingState.COUNTDOWN)
             syncFloatingWindow(RecordingState.COUNTDOWN)
             stateCallback?.onStateChanged(RecordingState.COUNTDOWN)
-            // Keep a dummy VirtualDisplay so the projection stays valid during countdown.
-            MediaProjectionHolder.park()
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            val useCustomRegion = currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0
+            if (useCustomRegion) {
+                MediaProjectionHolder.park(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+            } else {
+                val (parkW, parkH) = computeFullScreenEncodeSize(metrics.widthPixels, metrics.heightPixels)
+                MediaProjectionHolder.park(parkW, parkH, metrics.densityDpi)
+            }
             startCountdownOverlay()
             startCountdown(countdownSeconds)
         } else {
@@ -318,8 +330,8 @@ class ScreenRecordService : Service() {
     private fun bindProjectionStopListener() {
         MediaProjectionHolder.setOnStopped {
             if (isStopping) return@setOnStopped
-            if (!isRecording && countdownJob?.isActive != true) {
-                LogManager.log(LogManager.TAG_RECORD, "MediaProjection onStop ignored during display setup")
+            if (isStarting || countdownJob?.isActive == true) {
+                LogManager.log(LogManager.TAG_RECORD, "MediaProjection onStop ignored during countdown/start")
                 return@setOnStopped
             }
             LogManager.log(LogManager.TAG_RECORD, "MediaProjection stopped by system, ending session")
@@ -342,8 +354,8 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateCountdown(0)
             sendCountdownToFloatingWindow(0)
             hideCountdownOverlay()
-            countdownJob = null
             startRecordingInternal()
+            countdownJob = null
         }
     }
 
@@ -384,6 +396,7 @@ class ScreenRecordService : Service() {
     private fun startRecordingInternal() {
         if (mediaProjection == null && !obtainMediaProjection(-1, null)) {
             LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal FAILED: MediaProjection unavailable")
+            isStarting = false
             RecordingCache.clear()
             RecordingStateManager.updateState(RecordingState.IDLE)
             syncFloatingWindow(RecordingState.IDLE)
@@ -404,36 +417,20 @@ class ScreenRecordService : Service() {
         windowManager.defaultDisplay.getRealMetrics(metrics)
         prepareCustomRegion(metrics.widthPixels, metrics.heightPixels)
 
-        val width: Int
-        val height: Int
-        if (currentResolution == Resolution.CUSTOM) {
-            width = alignForCodec(customResolutionWidth)
-            height = alignForCodec(customResolutionHeight)
-        } else {
-            // Adapt resolution to device orientation: Resolution enum values are landscape,
-            // but the device may be in portrait — swap width/height to match.
-            val resW = currentResolution.width
-            val resH = currentResolution.height
-            val isDevicePortrait = metrics.heightPixels > metrics.widthPixels
-            val isResLandscape = resW > resH
-            if (isDevicePortrait && isResLandscape) {
-                width = resH
-                height = resW
-            } else {
-                width = resW
-                height = resH
-            }
-        }
+        val (width, height) = computeFullScreenEncodeSize(metrics.widthPixels, metrics.heightPixels)
 
         val useCustomRegion = currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0
         val captureWidth = if (useCustomRegion) metrics.widthPixels else width
         val captureHeight = if (useCustomRegion) metrics.heightPixels else height
         val codecWidth = if (useCustomRegion) customWidth else width
         val codecHeight = if (useCustomRegion) customHeight else height
+        recordWidth = codecWidth
+        recordHeight = codecHeight
 
         // Guard against double-start: if already recording or stopping, bail out
         if (isRecording || isStopping) {
             LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal skipped: isRecording=$isRecording isStopping=$isStopping")
+            isStarting = false
             RecordingStateManager.updateState(RecordingState.IDLE)
             syncFloatingWindow(RecordingState.IDLE)
             return
@@ -444,7 +441,7 @@ class ScreenRecordService : Service() {
             "start recording: res=${currentResolution.value} capture=${captureWidth}x$captureHeight " +
             "codec=${codecWidth}x$codecHeight fps=${currentFrameRate.value} " +
             "bitrate=${
-                if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
+                if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(codecWidth, codecHeight, currentFrameRate)
             } audioMode=${currentAudioMode} recordMode=${currentRecordMode} " +
             "region=${customOffsetX},${customOffsetY} ${customWidth}x$customHeight " +
             "out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
@@ -485,6 +482,7 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateState(RecordingState.RECORDING)
             syncFloatingWindow(RecordingState.RECORDING)
             stateCallback?.onStateChanged(RecordingState.RECORDING)
+            Handler(Looper.getMainLooper()).postDelayed({ isStarting = false }, 2000)
             LogManager.log(LogManager.TAG_RECORD, "RECORDING started")
 
             if (watermarkEnabled && watermarkText.isNotEmpty()) {
@@ -511,6 +509,7 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "Recording setup FAILED", e)
             e.printStackTrace()
             isRecording = false
+            isStarting = false
             hideCountdownOverlay()
             cleanup()
             RecordingStateManager.updateState(RecordingState.IDLE)
@@ -525,6 +524,28 @@ class ScreenRecordService : Service() {
      * H.264 encoders require even dimensions; many devices need multiples of 16.
      */
     private fun alignForCodec(value: Int): Int = (value / 16 * 16).coerceAtLeast(16)
+
+    /**
+     * Scale the real screen into the selected resolution tier while keeping
+     * the device aspect ratio. 1080P means the short side is at most 1080.
+     */
+    private fun computeFullScreenEncodeSize(screenWidth: Int, screenHeight: Int): Pair<Int, Int> {
+        if (currentResolution == Resolution.CUSTOM) {
+            return alignForCodec(customResolutionWidth) to alignForCodec(customResolutionHeight)
+        }
+        val safeW = screenWidth.coerceAtLeast(16)
+        val safeH = screenHeight.coerceAtLeast(16)
+        val targetShort = minOf(currentResolution.width, currentResolution.height).coerceAtLeast(16)
+        val screenShort = minOf(safeW, safeH)
+        val scale = minOf(1f, targetShort.toFloat() / screenShort.toFloat())
+        val width = alignForCodec((safeW * scale).toInt().coerceAtLeast(16))
+        val height = alignForCodec((safeH * scale).toInt().coerceAtLeast(16))
+        LogManager.log(
+            LogManager.TAG_RECORD,
+            "full-screen size: screen=${safeW}x$safeH tier=${currentResolution.value} encode=${width}x$height scale=$scale"
+        )
+        return width to height
+    }
 
     /**
      * Clamp the saved region to the current screen and align it for MediaCodec.
@@ -612,7 +633,7 @@ class ScreenRecordService : Service() {
         return if (currentBitrate > 0) {
             currentBitrate
         } else {
-            BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
+            BitrateMode.calculateSmartBitrate(recordWidth, recordHeight, currentFrameRate)
         }
     }
 
@@ -1112,17 +1133,19 @@ class ScreenRecordService : Service() {
     }
 
     private fun tryStartMuxer(muxer: MediaMuxer) {
-        if (!muxerStarted && videoTrackIndex != -1) {
-            if (audioTrackIndex != -1 && audioTrackIndex != -2) {
-                muxer.start()
-                muxerStarted = true
-                writePendingSamples(muxer)
-            } else if (recordingStartTime > 0 && System.currentTimeMillis() - recordingStartTime > 3000) {
-                LogManager.log(LogManager.TAG_RECORD, "Audio track not ready in time, starting muxer video-only")
-                muxer.start()
-                muxerStarted = true
-                writePendingSamples(muxer)
-            }
+        if (muxerStarted || videoTrackIndex == -1) return
+        val audioReady = audioTrackIndex != -1 && audioTrackIndex != -2
+        val audioUnavailable = audioCodec == null || audioTrackIndex == -2
+        val waitedLongEnough = recordingStartTime > 0 &&
+            System.currentTimeMillis() - recordingStartTime > 1000
+        if (audioReady || audioUnavailable || waitedLongEnough) {
+            muxer.start()
+            muxerStarted = true
+            writePendingSamples(muxer)
+            LogManager.log(
+                LogManager.TAG_RECORD,
+                "muxer started audioTrack=$audioTrackIndex audioReady=$audioReady"
+            )
         }
     }
 
@@ -1188,6 +1211,7 @@ class ScreenRecordService : Service() {
     private fun handleStop() {
         if (isStopping) return
         isStopping = true
+        isStarting = false
         LogManager.log(LogManager.TAG_RECORD, "STOP requested")
         isRecording = false
         isPaused = false
@@ -1249,7 +1273,7 @@ class ScreenRecordService : Service() {
                 if (!muxerStarted && videoTrackIndex != -1) {
                     mediaMuxer?.start()
                     muxerStarted = true
-                    writePendingSamples(mediaMuxer!!)
+                    mediaMuxer?.let { writePendingSamples(it) }
                     LogManager.log(LogManager.TAG_RECORD, "handleStop: force start muxer (video-only)")
                 }
             } catch (e: Exception) {
