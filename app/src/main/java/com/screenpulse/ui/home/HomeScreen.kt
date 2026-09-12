@@ -42,6 +42,7 @@ import com.screenpulse.viewmodel.SettingsViewModel
 import androidx.core.content.ContextCompat
 import com.screenpulse.util.LogManager
 import com.screenpulse.util.MediaProjectionHolder
+import com.screenpulse.util.OverlayRecordingStarter
 import com.screenpulse.util.ProjectionRequestBus
 import com.screenpulse.util.RecordingCache
 import kotlinx.coroutines.delay
@@ -173,14 +174,15 @@ fun HomeScreen(
                         pipSize = pipSize,
                         customResolutionWidth = customResolutionWidth,
                         customResolutionHeight = customResolutionHeight,
-                        regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
-                        regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
-                        regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
-                        regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
+                        regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) RecordingCache.config.regionWidth else 0,
+                        regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) RecordingCache.config.regionHeight else 0,
+                        regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) RecordingCache.config.regionOffsetX else 0,
+                        regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) RecordingCache.config.regionOffsetY else 0,
                         customSaveTreeUri = customSaveTreeUri,
                         floatingWindowPersistent = floatingWindowPersistent
                     )
                 )
+                val regionCfg = RecordingCache.config
                 startRecording(
                     context = context,
                     resultCode = result.resultCode,
@@ -202,10 +204,10 @@ fun HomeScreen(
                     watermarkImageUri = watermarkImageUri,
                     customResolutionWidth = customResolutionWidth,
                     customResolutionHeight = customResolutionHeight,
-                    regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
-                    regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
-                    regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
-                    regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
+                    regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) regionCfg.regionWidth else 0,
+                    regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) regionCfg.regionHeight else 0,
+                    regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) regionCfg.regionOffsetX else 0,
+                    regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) regionCfg.regionOffsetY else 0,
                     customSaveTreeUri = customSaveTreeUri,
                     floatingWindowPersistent = floatingWindowPersistent,
                     settingsViewModel = settingsViewModel
@@ -231,8 +233,17 @@ fun HomeScreen(
                 offsetY = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)
             )
             settingsViewModel.setCustomRegion(region)
+            RecordingCache.applyRegion(region)
             LogManager.log(LogManager.TAG_UI, "Region selected: ${region.offsetX},${region.offsetY} ${region.width}x${region.height} -> asking MediaProjection")
-            mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+            if (MediaProjectionHolder.isActive) {
+                OverlayRecordingStarter.startCapture(context)
+                if (pipEnabled) {
+                    startPipOverlay(context, pipSize)
+                }
+                startFloatingWindow(context, floatingWindowPersistent)
+            } else {
+                mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
+            }
         } else {
             LogManager.log(LogManager.TAG_UI, "Region selection cancelled by user")
         }
@@ -269,7 +280,7 @@ fun HomeScreen(
     }
 
     fun requestRecording() {
-        if (MediaProjectionHolder.isActive) {
+        if (MediaProjectionHolder.isActive && recordMode != RecordMode.CUSTOM_REGION) {
             LogManager.log(LogManager.TAG_UI, "Record button: MediaProjection already held, start directly")
             ContextCompat.startForegroundService(context, RecordingCache.createStartIntent(context))
             if (pipEnabled) {

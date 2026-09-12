@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import com.screenpulse.ScreenPulseApp
 import com.screenpulse.repository.BitrateMode
+import com.screenpulse.repository.CustomRegion
 import com.screenpulse.repository.RecordMode
 import com.screenpulse.repository.SettingsRepository
 import com.screenpulse.service.ScreenRecordService
@@ -51,6 +52,8 @@ object RecordingCache {
     private var _resultCode: Int = 0
     private var _resultData: Intent? = null
     private var _config: Config = Config()
+    @Volatile
+    private var pendingRegion: CustomRegion? = null
 
     /** Whether the cache contains a valid MediaProjection authorization. */
     val isValid: Boolean
@@ -66,6 +69,7 @@ object RecordingCache {
         _resultCode = code
         _resultData = data
         _config = config
+        pendingRegion?.let { applyPendingRegionLocked(it) }
         LogManager.log(LogManager.TAG_FLOAT, "RecordingCache saved: resultCode=$code")
     }
 
@@ -138,7 +142,26 @@ object RecordingCache {
             )
         }
         _config = latest
+        pendingRegion?.let { applyPendingRegionLocked(it) }
         LogManager.log(LogManager.TAG_FLOAT, "RecordingCache config refreshed from settings")
+    }
+
+    fun applyRegion(region: CustomRegion) {
+        pendingRegion = region
+        applyPendingRegionLocked(region)
+        LogManager.log(
+            LogManager.TAG_FLOAT,
+            "RecordingCache region applied: ${region.offsetX},${region.offsetY} ${region.width}x${region.height}"
+        )
+    }
+
+    private fun applyPendingRegionLocked(region: CustomRegion) {
+        _config = _config.copy(
+            regionWidth = region.width,
+            regionHeight = region.height,
+            regionOffsetX = region.offsetX,
+            regionOffsetY = region.offsetY
+        )
     }
 
     /**
@@ -151,6 +174,10 @@ object RecordingCache {
         resultData: Intent? = null
     ): Intent {
         refreshConfigFromSettings(context)
+        pendingRegion?.let {
+            applyPendingRegionLocked(it)
+            pendingRegion = null
+        }
         val c = _config
         val effectiveBitrate = if (c.bitrateMode == BitrateMode.SMART.value) 0 else c.bitrate
         val code = resultCode ?: _resultCode

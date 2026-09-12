@@ -42,6 +42,8 @@
 
         <activity
             android:name=".ui.regionselect.RegionSelectActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
             android:theme="@style/Theme.ScreenPulse.Transparent" />
 
         <activity

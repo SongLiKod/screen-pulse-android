@@ -35,12 +35,13 @@ class RegionCropRenderer {
         private const val TAG = "${LogManager.TAG_RECORD}:RegionCrop"
 
         private val VERTEX_SHADER = """
+            uniform mat4 uTexMatrix;
             attribute vec4 aPosition;
-            attribute vec2 aTexCoord;
+            attribute vec4 aTexCoord;
             varying vec2 vTexCoord;
             void main() {
                 gl_Position = aPosition;
-                vTexCoord = aTexCoord;
+                vTexCoord = (uTexMatrix * aTexCoord).xy;
             }
         """
 
@@ -87,6 +88,7 @@ class RegionCropRenderer {
     private var program = 0
     private var positionHandle = 0
     private var texCoordHandle = 0
+    private var texMatrixHandle = 0
 
     // Watermark shader program
     private var watermarkProgram = 0
@@ -192,15 +194,15 @@ class RegionCropRenderer {
 
         val left = cropX.toFloat() / screenWidth.toFloat()
         val right = (cropX + cropWidth).toFloat() / screenWidth.toFloat()
-        val top = cropY.toFloat() / screenHeight.toFloat()
-        val bottom = (cropY + cropHeight).toFloat() / screenHeight.toFloat()
+        val top = 1f - cropY.toFloat() / screenHeight.toFloat()
+        val bottom = 1f - (cropY + cropHeight).toFloat() / screenHeight.toFloat()
         LogManager.log(TAG, "init: crop tex coords: left=$left top=$top right=$right bottom=$bottom")
 
         val texCoords = floatArrayOf(
-            left, bottom,
             right, bottom,
-            left, top,
-            right, top
+            left, bottom,
+            right, top,
+            left, top
         )
         cropTexCoordBuffer = java.nio.ByteBuffer.allocateDirect(texCoords.size * 4)
             .order(java.nio.ByteOrder.nativeOrder())
@@ -364,28 +366,21 @@ class RegionCropRenderer {
             surfaceTexture?.updateTexImage()
 
             val texMatrix = FloatArray(16)
+            android.opengl.Matrix.setIdentityM(texMatrix, 0)
             surfaceTexture?.getTransformMatrix(texMatrix)
 
-            val transformedCoords = transformCropCoords(texMatrix)
-
-            // Clear
             GLES20.glClearColor(0f, 0f, 0f, 1f)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-            // Draw screen capture quad
             GLES20.glUseProgram(program)
+            GLES20.glUniformMatrix4fv(texMatrixHandle, 1, false, texMatrix, 0)
 
             GLES20.glEnableVertexAttribArray(positionHandle)
             GLES20.glVertexAttribPointer(positionHandle, 2, GLES20.GL_FLOAT, false, 8, vertexBuffer)
 
-            val transformedBuffer = java.nio.ByteBuffer.allocateDirect(transformedCoords.size * 4)
-                .order(java.nio.ByteOrder.nativeOrder())
-                .asFloatBuffer()
-                .put(transformedCoords)
-                .apply { position(0) }
-
+            cropTexCoordBuffer?.position(0)
             GLES20.glEnableVertexAttribArray(texCoordHandle)
-            GLES20.glVertexAttribPointer(texCoordHandle, 2, GLES20.GL_FLOAT, false, 8, transformedBuffer)
+            GLES20.glVertexAttribPointer(texCoordHandle, 2, GLES20.GL_FLOAT, false, 8, cropTexCoordBuffer)
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(0x8D65, textureId)
@@ -443,33 +438,6 @@ class RegionCropRenderer {
 
         // Disable blending
         GLES20.glDisable(GLES20.GL_BLEND)
-    }
-
-    private fun transformCropCoords(texMatrix: FloatArray): FloatArray {
-        val left = cropTexCoordBuffer?.get(0) ?: 0f
-        val bottom = cropTexCoordBuffer?.get(1) ?: 0f
-        val right = cropTexCoordBuffer?.get(2) ?: 0f
-        val top = cropTexCoordBuffer?.get(5) ?: 0f
-
-        val m = texMatrix
-        return floatArrayOf(
-            transformPoint(left, bottom, m),
-            transformPointY(left, bottom, m),
-            transformPoint(right, bottom, m),
-            transformPointY(right, bottom, m),
-            transformPoint(left, top, m),
-            transformPointY(left, top, m),
-            transformPoint(right, top, m),
-            transformPointY(right, top, m)
-        )
-    }
-
-    private fun transformPoint(x: Float, y: Float, m: FloatArray): Float {
-        return m[0] * x + m[4] * y + m[12]
-    }
-
-    private fun transformPointY(x: Float, y: Float, m: FloatArray): Float {
-        return m[1] * x + m[5] * y + m[13]
     }
 
     private fun setupEGL(encoderSurface: Surface): Boolean {
@@ -576,8 +544,9 @@ class RegionCropRenderer {
 
         positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
         texCoordHandle = GLES20.glGetAttribLocation(program, "aTexCoord")
+        texMatrixHandle = GLES20.glGetUniformLocation(program, "uTexMatrix")
 
-        LogManager.log(TAG, "setupGL: success, program=$program pos=$positionHandle tex=$texCoordHandle")
+        LogManager.log(TAG, "setupGL: success, program=$program pos=$positionHandle tex=$texCoordHandle mat=$texMatrixHandle")
         return true
     }
 
