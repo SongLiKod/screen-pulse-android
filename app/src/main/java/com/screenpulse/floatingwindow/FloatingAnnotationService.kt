@@ -6,17 +6,19 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import androidx.core.content.ContextCompat
 import com.screenpulse.R
 import com.screenpulse.ui.annotation.AnnotationOverlayView
 import com.screenpulse.util.LogManager
@@ -118,12 +120,15 @@ class FloatingAnnotationService : Service() {
 
         val toolbar = createToolbar()
         toolbarView = toolbar
+        val sideInset = 16.dpToPx()
         rootView?.addView(toolbar, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         ).apply {
-            bottomMargin = 100
+            leftMargin = sideInset
+            rightMargin = sideInset
+            bottomMargin = navigationBarInset() + 12.dpToPx()
         })
 
         windowManager?.addView(rootView, layoutParams)
@@ -196,16 +201,22 @@ class FloatingAnnotationService : Service() {
     @SuppressLint("ClickableViewAccessibility")
     private fun createToolbar(): LinearLayout {
         val toolbar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(12, 8, 12, 8)
-            setBackgroundColor(
-                if (isDarkMode) ContextCompat.getColor(context, R.color.annotation_toolbar_bg_dark)
-                else ContextCompat.getColor(context, R.color.annotation_toolbar_bg_light)
+            setPadding(10.dpToPx(), 8.dpToPx(), 10.dpToPx(), 8.dpToPx())
+            background = roundedRect(
+                if (isDarkMode) 0xF21E1E1E.toInt() else 0xF2FFFFFF.toInt(),
+                22.dpToPx().toFloat()
             )
+            elevation = 10.dpToPx().toFloat()
         }
 
-        // Tool buttons
+        val btnSize = 36.dpToPx()
+        val toolRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
         val tools = listOf(
             Triple(AnnotationOverlayView.AnnotationTool.PEN, R.drawable.ic_pen, getString(R.string.tool_pen)),
             Triple(AnnotationOverlayView.AnnotationTool.ARROW, R.drawable.ic_arrow, getString(R.string.tool_arrow)),
@@ -215,101 +226,126 @@ class FloatingAnnotationService : Service() {
         )
 
         tools.forEach { (tool, iconRes, desc) ->
-            val btn = ImageView(this).apply {
-                setImageResource(iconRes)
-                contentDescription = desc
-                setPadding(10, 10, 10, 10)
-                setOnClickListener {
-                    annotationView?.setTool(tool)
-                    updateToolSelection(this)
-                }
+            val btn = toolButton(iconRes, desc) {
+                annotationView?.setTool(tool)
+                updateToolSelection(this)
             }
             if (tool == AnnotationOverlayView.AnnotationTool.PEN) {
                 selectedToolBtn = btn
                 highlightToolButton(btn, true)
             }
-            toolbar.addView(btn, LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()))
+            toolRow.addView(btn, LinearLayout.LayoutParams(btnSize, btnSize))
         }
 
-        // Separator
-        val separator = View(this).apply {
-            setBackgroundColor(android.graphics.Color.parseColor("#33999999"))
-        }
-        toolbar.addView(separator, LinearLayout.LayoutParams(2.dpToPx(), 36.dpToPx()).apply {
-            marginStart = 6
-            marginEnd = 6
+        toolRow.addView(verticalDivider(), LinearLayout.LayoutParams(1.dpToPx(), 20.dpToPx()).apply {
+            marginStart = 6.dpToPx()
+            marginEnd = 6.dpToPx()
         })
 
-        // Color buttons
-        val colors = AnnotationOverlayView.AnnotationColor.entries
-        colors.forEach { color ->
+        val undoBtn = toolButton(R.drawable.ic_undo, getString(R.string.cd_undo)) {
+            annotationView?.undo()
+        }
+        toolRow.addView(undoBtn, LinearLayout.LayoutParams(btnSize, btnSize))
+
+        val clearBtn = toolButton(R.drawable.ic_clear, getString(R.string.cd_clear_draw)) {
+            annotationView?.clearAll()
+        }
+        toolRow.addView(clearBtn, LinearLayout.LayoutParams(btnSize, btnSize))
+
+        val closeBtn = toolButton(R.drawable.ic_close, getString(R.string.cd_close)) {
+            hideAnnotationOverlay()
+        }
+        toolRow.addView(closeBtn, LinearLayout.LayoutParams(btnSize, btnSize))
+
+        val colorRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 8.dpToPx(), 0, 2.dpToPx())
+        }
+        val chipSize = 22.dpToPx()
+        AnnotationOverlayView.AnnotationColor.entries.forEach { color ->
             val btn = View(this).apply {
-                setBackgroundColor(color.colorInt)
+                tag = color.colorInt
                 contentDescription = color.displayName
-                val size = 24.dpToPx()
-                layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                    marginStart = 4
-                    marginEnd = 4
-                }
+                background = colorChipDrawable(color.colorInt, color == AnnotationOverlayView.AnnotationColor.GREEN)
                 setOnClickListener {
                     annotationView?.setColor(color)
-                    updateColorSelection(this@apply)
+                    updateColorSelection(this)
                 }
             }
             if (color == AnnotationOverlayView.AnnotationColor.GREEN) {
-                highlightColorButton(btn, true)
+                selectedColorView = btn
             }
-            // Add border/stroke via background
-            val wrapper = FrameLayout(this).apply {
-                setPadding(2, 2, 2, 2)
-                addView(btn)
-            }
-            toolbar.addView(wrapper, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = 2
-                marginEnd = 2
+            colorRow.addView(btn, LinearLayout.LayoutParams(chipSize, chipSize).apply {
+                marginStart = 6.dpToPx()
+                marginEnd = 6.dpToPx()
             })
         }
 
-        // Separator
-        val separator2 = View(this).apply {
-            setBackgroundColor(android.graphics.Color.parseColor("#33999999"))
-        }
-        toolbar.addView(separator2, LinearLayout.LayoutParams(2.dpToPx(), 36.dpToPx()).apply {
-            marginStart = 6
-            marginEnd = 6
-        })
-
-        // Undo button
-        val undoBtn = ImageView(this).apply {
-            setImageResource(R.drawable.ic_undo)
-            contentDescription = getString(R.string.cd_undo)
-            setPadding(10, 10, 10, 10)
-            setOnClickListener { annotationView?.undo() }
-        }
-        toolbar.addView(undoBtn, LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()))
-
-        // Clear button
-        val clearBtn = ImageView(this).apply {
-            setImageResource(R.drawable.ic_clear)
-            contentDescription = getString(R.string.cd_clear_draw)
-            setPadding(10, 10, 10, 10)
-            setOnClickListener { annotationView?.clearAll() }
-        }
-        toolbar.addView(clearBtn, LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()))
-
-        // Close button
-        val closeBtn = ImageView(this).apply {
-            setImageResource(R.drawable.ic_close)
-            contentDescription = getString(R.string.cd_close)
-            setPadding(10, 10, 10, 10)
-            setOnClickListener { hideAnnotationOverlay() }
-        }
-        toolbar.addView(closeBtn, LinearLayout.LayoutParams(44.dpToPx(), 44.dpToPx()))
-
+        toolbar.addView(toolRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        toolbar.addView(colorRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
         return toolbar
+    }
+
+    private fun toolButton(iconRes: Int, description: String, onClick: ImageView.() -> Unit): ImageView {
+        return ImageView(this).apply {
+            setImageResource(iconRes)
+            contentDescription = description
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(7.dpToPx(), 7.dpToPx(), 7.dpToPx(), 7.dpToPx())
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun verticalDivider(): View {
+        return View(this).apply {
+            background = GradientDrawable().apply {
+                setColor(if (isDarkMode) 0x44FFFFFF else 0x33999999)
+                cornerRadius = 1.dpToPx().toFloat()
+            }
+        }
+    }
+
+    private fun roundedRect(color: Int, radius: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(color)
+            cornerRadius = radius
+        }
+    }
+
+    private fun colorChipDrawable(color: Int, selected: Boolean): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+            val stroke = if (selected) {
+                if (isDarkMode) Color.WHITE else Color.parseColor("#FF2E7D32")
+            } else if (color == Color.WHITE || color == Color.YELLOW) {
+                Color.parseColor("#66000000")
+            } else {
+                Color.parseColor("#33FFFFFF")
+            }
+            setStroke(if (selected) 3.dpToPx() else 1.dpToPx(), stroke)
+        }
+    }
+
+    private fun navigationBarInset(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager?.currentWindowMetrics?.windowInsets
+                ?.getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars())
+                ?.bottom
+                ?.coerceAtLeast(12.dpToPx())
+                ?: 24.dpToPx()
+        } else {
+            val id = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+            if (id > 0) resources.getDimensionPixelSize(id) else 24.dpToPx()
+        }
     }
 
     private fun updateToolSelection(selectedBtn: View) {
@@ -319,15 +355,13 @@ class FloatingAnnotationService : Service() {
     }
 
     private fun highlightToolButton(btn: View?, highlight: Boolean) {
-        btn?.let {
-            if (highlight) {
-                it.setBackgroundColor(
-                    if (isDarkMode) android.graphics.Color.parseColor("#44FFFFFF")
-                    else android.graphics.Color.parseColor("#442E7D32")
-                )
-            } else {
-                it.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            }
+        btn?.background = if (highlight) {
+            roundedRect(
+                if (isDarkMode) Color.parseColor("#44FFFFFF") else Color.parseColor("#332E7D32"),
+                10.dpToPx().toFloat()
+            )
+        } else {
+            null
         }
     }
 
@@ -340,14 +374,8 @@ class FloatingAnnotationService : Service() {
     }
 
     private fun highlightColorButton(btn: View?, highlight: Boolean) {
-        btn?.let {
-            val size = if (highlight) 28.dpToPx() else 24.dpToPx()
-            it.layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                marginStart = 0
-                marginEnd = 0
-            }
-            it.requestLayout()
-        }
+        val color = btn?.tag as? Int ?: return
+        btn.background = colorChipDrawable(color, highlight)
     }
 
     private fun hideAnnotationOverlay() {
