@@ -17,13 +17,16 @@ import android.view.Surface
  * until after a countdown. We obtain the projection immediately after consent
  * and keep a tiny dummy VirtualDisplay while waiting to start.
  *
- * Releasing that dummy before a capture display exists can stop the whole
- * MediaProjection session. Prefer [adoptOrCreateDisplay] so the keep-alive
- * display is resized onto the encoder surface instead of being released first.
+ * Releasing that dummy, or treating a replacement onStop as a real stop,
+ * kills the whole MediaProjection session. Reuse the keep-alive display
+ * and ignore onStop until capture is running.
  */
 object MediaProjectionHolder {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val clearReplacementFlag = Runnable {
+        replacingDisplays = false
+    }
 
     @Volatile
     private var projection: MediaProjection? = null
@@ -33,7 +36,7 @@ object MediaProjectionHolder {
     @Volatile
     private var onStopped: (() -> Unit)? = null
     @Volatile
-    private var suppressStopCount = 0
+    private var replacingDisplays = false
 
     val isActive: Boolean
         get() = projection != null
@@ -53,7 +56,7 @@ object MediaProjectionHolder {
             override fun onStop() {
                 val listener: (() -> Unit)?
                 synchronized(this@MediaProjectionHolder) {
-                    if (suppressStopCount > 0) {
+                    if (replacingDisplays) {
                         LogManager.log(LogManager.TAG_RECORD, "MediaProjection onStop ignored during display replacement")
                         return
                     }
@@ -77,25 +80,19 @@ object MediaProjectionHolder {
     }
 
     fun beginDisplayReplacement() {
-        synchronized(this) {
-            suppressStopCount++
-        }
+        mainHandler.removeCallbacks(clearReplacementFlag)
+        replacingDisplays = true
     }
 
     fun endDisplayReplacement() {
-        // VirtualDisplay.release()/resize() may deliver onStop asynchronously
-        // on the main looper. Drop that callback before restoring listeners.
-        mainHandler.post {
-            synchronized(this) {
-                if (suppressStopCount > 0) suppressStopCount--
-            }
-        }
+        mainHandler.removeCallbacks(clearReplacementFlag)
+        mainHandler.postDelayed(clearReplacementFlag, 2000)
     }
 
     /**
-     * Create the capture VirtualDisplay. Prefer a fresh display so encoder /
-     * SurfaceTexture consumers actually receive frames. Keep the dummy display
-     * until the new one exists so Android 14+ does not stop MediaProjection.
+     * Reuse the countdown keep-alive VirtualDisplay as the capture display.
+     * Creating a second display or releasing the dummy first can stop
+     * MediaProjection on Android 14+.
      */
     @Synchronized
     fun adoptOrCreateDisplay(
@@ -106,34 +103,21 @@ object MediaProjectionHolder {
         surface: Surface
     ): VirtualDisplay? {
         val p = projection ?: return null
-        suppressStopCount++
+        replacingDisplays = true
         try {
-            val created = runCatching {
-                p.createVirtualDisplay(
-                    name,
-                    width,
-                    height,
-                    densityDpi,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    surface,
-                    null,
-                    null
-                )
-            }.onFailure {
-                LogManager.log(LogManager.TAG_RECORD, "createVirtualDisplay while parked failed", it)
-            }.getOrNull()
-            if (created != null) {
-                releaseDummyLocked()
+            val existing = dummyDisplay
+            if (existing != null) {
+                existing.setSurface(surface)
+                dummyDisplay = null
+                val reader = dummyReader
+                dummyReader = null
+                runCatching { reader?.close() }
                 LogManager.log(
                     LogManager.TAG_RECORD,
-                    "MediaProjectionHolder created capture display ${width}x$height"
+                    "MediaProjectionHolder reused keep-alive display ${width}x$height"
                 )
-                return created
+                return existing
             }
-
-            // Some devices allow only one VirtualDisplay. Drop the keep-alive
-            // display first, then create the capture display.
-            releaseDummyLocked()
             return p.createVirtualDisplay(
                 name,
                 width,
@@ -147,58 +131,53 @@ object MediaProjectionHolder {
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder adoptOrCreateDisplay failed", e)
             return null
-        } finally {
-            suppressStopCount--
         }
     }
 
     @Synchronized
-    fun unpark() {
-        suppressStopCount++
-        try {
-            releaseDummyLocked()
-        } finally {
-            suppressStopCount--
-        }
-    }
-
-    @Synchronized
-    fun park() {
+    fun park(width: Int = 16, height: Int = 16, densityDpi: Int = 160) {
         val p = projection ?: return
+        replacingDisplays = true
         if (dummyDisplay != null) {
             LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder already parked")
             return
         }
-        suppressStopCount++
-        try {
-            val reader = ImageReader.newInstance(16, 16, PixelFormat.RGBA_8888, 2)
-            dummyReader = reader
-            dummyDisplay = p.createVirtualDisplay(
-                "ScreenPulseKeepAlive",
-                16,
-                16,
-                160,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                reader.surface,
-                null,
-                null
-            )
-            LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder parked (keep-alive display)")
-        } catch (e: Exception) {
-            LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder park failed", e)
-            releaseDummyLocked()
-        } finally {
-            suppressStopCount--
+        val w = width.coerceAtLeast(16)
+        val h = height.coerceAtLeast(16)
+        val dpi = densityDpi.coerceAtLeast(160)
+        val sizes = listOf(w to h, 1280 to 720, 16 to 16)
+        for ((pw, ph) in sizes) {
+            try {
+                releaseDummyLocked()
+                val reader = ImageReader.newInstance(pw, ph, PixelFormat.RGBA_8888, 2)
+                dummyReader = reader
+                dummyDisplay = p.createVirtualDisplay(
+                    "ScreenPulseKeepAlive",
+                    pw,
+                    ph,
+                    dpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    reader.surface,
+                    null,
+                    null
+                )
+                LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder parked ${pw}x$ph dpi=$dpi")
+                return
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder park failed ${pw}x$ph", e)
+                releaseDummyLocked()
+            }
         }
     }
 
     fun clear() {
         val toStop: MediaProjection?
         synchronized(this) {
-            suppressStopCount++
+            mainHandler.removeCallbacks(clearReplacementFlag)
+            replacingDisplays = true
             onStopped = null
             toStop = takeProjectionLocked()
-            suppressStopCount = 0
+            replacingDisplays = false
         }
         runCatching { toStop?.stop() }
         LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder cleared")

@@ -115,6 +115,7 @@ class ScreenRecordService : Service() {
     @Volatile private var isRecording = false
     @Volatile private var isPaused = false
     @Volatile private var isStopping = false
+    @Volatile private var isStarting = false
     private var recordingStartTime = 0L
     private var pausedDuration = 0L
     private var totalPausedDuration = 0L
@@ -225,12 +226,14 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "handleStart: resetting stale isStopping flag")
             isStopping = false
         }
+        isStarting = true
 
         // Obtain MediaProjection immediately after consent. Android 14+ invalidates the
         // token if getMediaProjection() is delayed until after countdown, or if a previous
         // projection was already stopped. Keep the live instance in MediaProjectionHolder.
         if (!obtainMediaProjection(resultCode, resultData)) {
             LogManager.log(LogManager.TAG_RECORD, "handleStart FAILED: MediaProjection unavailable")
+            isStarting = false
             RecordingCache.clear()
             RecordingStateManager.updateState(RecordingState.IDLE)
             syncFloatingWindow(RecordingState.IDLE)
@@ -270,8 +273,11 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateState(RecordingState.COUNTDOWN)
             syncFloatingWindow(RecordingState.COUNTDOWN)
             stateCallback?.onStateChanged(RecordingState.COUNTDOWN)
-            // Keep a dummy VirtualDisplay so the projection stays valid during countdown.
-            MediaProjectionHolder.park()
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            MediaProjectionHolder.park(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
             startCountdownOverlay()
             startCountdown(countdownSeconds)
         } else {
@@ -318,8 +324,8 @@ class ScreenRecordService : Service() {
     private fun bindProjectionStopListener() {
         MediaProjectionHolder.setOnStopped {
             if (isStopping) return@setOnStopped
-            if (!isRecording && countdownJob?.isActive != true) {
-                LogManager.log(LogManager.TAG_RECORD, "MediaProjection onStop ignored during display setup")
+            if (isStarting || countdownJob?.isActive == true) {
+                LogManager.log(LogManager.TAG_RECORD, "MediaProjection onStop ignored during countdown/start")
                 return@setOnStopped
             }
             LogManager.log(LogManager.TAG_RECORD, "MediaProjection stopped by system, ending session")
@@ -342,8 +348,8 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateCountdown(0)
             sendCountdownToFloatingWindow(0)
             hideCountdownOverlay()
-            countdownJob = null
             startRecordingInternal()
+            countdownJob = null
         }
     }
 
@@ -384,6 +390,7 @@ class ScreenRecordService : Service() {
     private fun startRecordingInternal() {
         if (mediaProjection == null && !obtainMediaProjection(-1, null)) {
             LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal FAILED: MediaProjection unavailable")
+            isStarting = false
             RecordingCache.clear()
             RecordingStateManager.updateState(RecordingState.IDLE)
             syncFloatingWindow(RecordingState.IDLE)
@@ -434,6 +441,7 @@ class ScreenRecordService : Service() {
         // Guard against double-start: if already recording or stopping, bail out
         if (isRecording || isStopping) {
             LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal skipped: isRecording=$isRecording isStopping=$isStopping")
+            isStarting = false
             RecordingStateManager.updateState(RecordingState.IDLE)
             syncFloatingWindow(RecordingState.IDLE)
             return
@@ -485,6 +493,7 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateState(RecordingState.RECORDING)
             syncFloatingWindow(RecordingState.RECORDING)
             stateCallback?.onStateChanged(RecordingState.RECORDING)
+            Handler(Looper.getMainLooper()).postDelayed({ isStarting = false }, 2000)
             LogManager.log(LogManager.TAG_RECORD, "RECORDING started")
 
             if (watermarkEnabled && watermarkText.isNotEmpty()) {
@@ -511,6 +520,7 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "Recording setup FAILED", e)
             e.printStackTrace()
             isRecording = false
+            isStarting = false
             hideCountdownOverlay()
             cleanup()
             RecordingStateManager.updateState(RecordingState.IDLE)
@@ -1190,6 +1200,7 @@ class ScreenRecordService : Service() {
     private fun handleStop() {
         if (isStopping) return
         isStopping = true
+        isStarting = false
         LogManager.log(LogManager.TAG_RECORD, "STOP requested")
         isRecording = false
         isPaused = false
