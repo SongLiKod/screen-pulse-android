@@ -111,12 +111,15 @@ jobs:
           path: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
           retention-days: 14
 
   release:
     needs: build
     if: ${{ github.event.inputs.tag != '' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -128,7 +131,32 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ScreenPulse-build
-          path: apk/
+          path: artifact
+
+      - name: Prepare APK for release
+        run: |
+          mkdir -p apk
+          echo "Downloaded artifact tree:"
+          find artifact -type f -print
+          mapfile -t APKS < <(find artifact -name '*.apk' -type f | sort)
+          if [ ${#APKS[@]} -eq 0 ]; then
+            echo "::error::No APK found in downloaded artifact"
+            exit 1
+          fi
+          TAG="${{ github.event.inputs.tag }}"
+          for SRC in "${APKS[@]}"; do
+            BASE=$(basename "$SRC")
+            if [[ "$BASE" == *release* ]]; then
+              DEST="apk/ScreenPulse-${TAG}.apk"
+            elif [[ "$BASE" == *debug* ]]; then
+              DEST="apk/ScreenPulse-${TAG}-debug.apk"
+            else
+              DEST="apk/${BASE}"
+            fi
+            cp "$SRC" "$DEST"
+            echo "Prepared $DEST from $SRC"
+          done
+          ls -lh apk/
 
       - name: Determine release name
         id: release_info
@@ -142,16 +170,17 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a ${{ steps.release_info.outputs.tag }} -m "Release ${{ steps.release_info.outputs.tag }}"
-          git push origin ${{ steps.release_info.outputs.tag }}
+          git tag -a ${{ steps.release_info.outputs.tag }} -m "Release ${{ steps.release_info.outputs.tag }}" || true
+          git push origin ${{ steps.release_info.outputs.tag }} || true
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_info.outputs.tag }}
           name: ${{ steps.release_info.outputs.name }}
           prerelease: ${{ github.event.inputs.prerelease }}
           files: apk/*.apk
+          fail_on_unmatched_files: true
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
