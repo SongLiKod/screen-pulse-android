@@ -10,8 +10,13 @@ import android.opengl.EGL14
 import android.opengl.EGLExt
 import android.opengl.GLES20
 import android.opengl.GLUtils
+import android.os.Handler
+import android.os.HandlerThread
 import android.view.Surface
 import com.screenpulse.util.LogManager
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Uses OpenGL ES to crop a region from a full-screen VirtualDisplay capture
@@ -100,6 +105,12 @@ class RegionCropRenderer {
 
     private var frameAvailable = false
     private val lock = Object()
+    private var outputWidth = 0
+    private var outputHeight = 0
+    private val glThread = HandlerThread("ScreenPulseCropGL")
+    private var glHandler: Handler? = null
+    @Volatile
+    private var released = false
 
     /**
      * Initialize EGL context, compile shaders, create SurfaceTexture.
@@ -114,40 +125,75 @@ class RegionCropRenderer {
         cropHeight: Int
     ): Boolean {
         LogManager.log(TAG, "init: screen=${screenWidth}x${screenHeight} crop=[$cropX,$cropY ${cropWidth}x${cropHeight}]")
+        released = false
+        outputWidth = cropWidth.coerceAtLeast(1)
+        outputHeight = cropHeight.coerceAtLeast(1)
+        ensureGlThread()
+        val handler = glHandler
+        if (handler == null) {
+            LogManager.log(TAG, "init: GL thread unavailable")
+            return false
+        }
 
-        // 1. Setup EGL with encoder surface
+        val ok = AtomicBoolean(false)
+        val latch = CountDownLatch(1)
+        handler.post {
+            try {
+                ok.set(initOnGlThread(encoderSurface, screenWidth, screenHeight, cropX, cropY, cropWidth, cropHeight))
+            } catch (e: Exception) {
+                LogManager.log(TAG, "init on GL thread failed", e)
+            } finally {
+                latch.countDown()
+            }
+        }
+        val finished = latch.await(5, TimeUnit.SECONDS)
+        if (!finished || !ok.get()) {
+            LogManager.log(TAG, "init: failed finished=$finished ok=${ok.get()}")
+            release()
+            return false
+        }
+        LogManager.log(TAG, "init: complete")
+        return true
+    }
+
+    private fun ensureGlThread() {
+        if (glThread.isAlive) {
+            if (glHandler == null) glHandler = Handler(glThread.looper)
+            return
+        }
+        glThread.start()
+        glHandler = Handler(glThread.looper)
+    }
+
+    private fun initOnGlThread(
+        encoderSurface: Surface,
+        screenWidth: Int,
+        screenHeight: Int,
+        cropX: Int,
+        cropY: Int,
+        cropWidth: Int,
+        cropHeight: Int
+    ): Boolean {
         if (!setupEGL(encoderSurface)) {
             LogManager.log(TAG, "init: EGL setup failed")
-            release()
             return false
         }
-
-        // 2. Compile screen capture shaders
         if (!setupGL()) {
             LogManager.log(TAG, "init: GL setup failed")
-            release()
             return false
         }
-
-        // 3. Compile watermark shaders
         if (!setupWatermarkGL()) {
             LogManager.log(TAG, "init: Watermark GL setup failed, watermark will be disabled")
-            // Non-fatal: recording can proceed without watermark
         }
-
-        // 4. Create OES texture + SurfaceTexture
         if (!createSurfaceTexture(screenWidth, screenHeight)) {
             LogManager.log(TAG, "init: SurfaceTexture creation failed")
-            release()
             return false
         }
 
-        // 5. Calculate crop texture coordinates
         val left = cropX.toFloat() / screenWidth.toFloat()
         val right = (cropX + cropWidth).toFloat() / screenWidth.toFloat()
         val top = cropY.toFloat() / screenHeight.toFloat()
         val bottom = (cropY + cropHeight).toFloat() / screenHeight.toFloat()
-
         LogManager.log(TAG, "init: crop tex coords: left=$left top=$top right=$right bottom=$bottom")
 
         val texCoords = floatArrayOf(
@@ -174,12 +220,12 @@ class RegionCropRenderer {
             .put(vertices)
             .apply { position(0) }
 
-        // 6. Set frame available listener
         surfaceTexture?.setOnFrameAvailableListener({ _ ->
             synchronized(lock) { frameAvailable = true }
-        })
+            drawFrameInternal(force = false)
+        }, glHandler)
 
-        LogManager.log(TAG, "init: complete")
+        GLES20.glViewport(0, 0, outputWidth, outputHeight)
         return true
     }
 
@@ -194,13 +240,29 @@ class RegionCropRenderer {
      * @param videoHeight The output video frame height in pixels
      */
     fun setWatermark(bitmap: Bitmap, videoWidth: Int, videoHeight: Int) {
+        val handler = glHandler
+        if (handler == null) {
+            LogManager.log(TAG, "setWatermark: GL thread unavailable")
+            return
+        }
+        val latch = CountDownLatch(1)
+        handler.post {
+            try {
+                setWatermarkOnGlThread(bitmap, videoWidth, videoHeight)
+            } finally {
+                latch.countDown()
+            }
+        }
+        latch.await(2, TimeUnit.SECONDS)
+    }
+
+    private fun setWatermarkOnGlThread(bitmap: Bitmap, videoWidth: Int, videoHeight: Int) {
         if (watermarkProgram == 0) {
             LogManager.log(TAG, "setWatermark: watermark program not compiled, skipping")
             return
         }
 
         try {
-            // Make EGL context current
             if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
                 LogManager.log(TAG, "setWatermark: eglMakeCurrent failed")
                 return
@@ -274,21 +336,29 @@ class RegionCropRenderer {
 
     /**
      * Draw a cropped frame (with optional watermark) to the encoder surface.
+     * Safe to call from the encode loop; actual GL work stays on the GL thread.
      */
     fun drawFrame(): Boolean {
+        val handler = glHandler ?: return false
+        handler.post { drawFrameInternal(force = false) }
+        return true
+    }
+
+    private fun drawFrameInternal(force: Boolean): Boolean {
+        if (released) return false
         synchronized(lock) {
-            if (!frameAvailable) return false
+            if (!force && !frameAvailable) return false
             frameAvailable = false
         }
 
         try {
-            // IMPORTANT: eglMakeCurrent MUST be called before updateTexImage(),
-            // because updateTexImage() requires a valid OpenGL context to be current
-            // on the calling thread. Without this, the texture update fails silently
-            // and no frames are rendered to the encoder surface.
             if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-                LogManager.log(TAG, "drawFrame: eglMakeCurrent failed")
+                LogManager.log(TAG, "drawFrame: eglMakeCurrent failed err=${EGL14.eglGetError()}")
                 return false
+            }
+
+            if (outputWidth > 0 && outputHeight > 0) {
+                GLES20.glViewport(0, 0, outputWidth, outputHeight)
             }
 
             surfaceTexture?.updateTexImage()
@@ -415,7 +485,20 @@ class RegionCropRenderer {
             return false
         }
 
-        val attribList = intArrayOf(
+        val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
+        val numConfigs = IntArray(1)
+        val recordableAttribs = intArrayOf(
+            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+            EGL14.EGL_RED_SIZE, 8,
+            EGL14.EGL_GREEN_SIZE, 8,
+            EGL14.EGL_BLUE_SIZE, 8,
+            EGL14.EGL_ALPHA_SIZE, 8,
+            EGL14.EGL_DEPTH_SIZE, 0,
+            EGL14.EGL_STENCIL_SIZE, 0,
+            EGLExt.EGL_RECORDABLE_ANDROID, 1,
+            EGL14.EGL_NONE
+        )
+        val fallbackAttribs = intArrayOf(
             EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
             EGL14.EGL_RED_SIZE, 8,
             EGL14.EGL_GREEN_SIZE, 8,
@@ -425,11 +508,17 @@ class RegionCropRenderer {
             EGL14.EGL_STENCIL_SIZE, 0,
             EGL14.EGL_NONE
         )
-        val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
-        val numConfigs = IntArray(1)
-        if (!EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)) {
-            LogManager.log(TAG, "setupEGL: eglChooseConfig failed")
-            return false
+        val choseRecordable = EGL14.eglChooseConfig(
+            eglDisplay, recordableAttribs, 0, configs, 0, 1, numConfigs, 0
+        ) && numConfigs[0] > 0 && configs[0] != null
+        if (!choseRecordable) {
+            LogManager.log(TAG, "setupEGL: recordable config unavailable, falling back")
+            if (!EGL14.eglChooseConfig(eglDisplay, fallbackAttribs, 0, configs, 0, 1, numConfigs, 0)
+                || numConfigs[0] <= 0 || configs[0] == null
+            ) {
+                LogManager.log(TAG, "setupEGL: eglChooseConfig failed")
+                return false
+            }
         }
 
         val contextAttribs = intArrayOf(
@@ -590,62 +679,74 @@ class RegionCropRenderer {
 
     fun release() {
         LogManager.log(TAG, "release")
+        released = true
+        val handler = glHandler
+        if (handler != null && glThread.isAlive) {
+            val latch = CountDownLatch(1)
+            handler.post {
+                try {
+                    releaseOnGlThread()
+                } finally {
+                    latch.countDown()
+                }
+            }
+            latch.await(2, TimeUnit.SECONDS)
+            glThread.quitSafely()
+        } else {
+            releaseOnGlThread()
+        }
+        glHandler = null
+        LogManager.log(TAG, "release: complete")
+    }
 
+    private fun releaseOnGlThread() {
+        runCatching { surfaceTexture?.setOnFrameAvailableListener(null) }
         runCatching { inputSurface?.release() }
         inputSurface = null
         runCatching { surfaceTexture?.release() }
         surfaceTexture = null
 
-        // Delete screen capture texture
-        if (textureId != 0) {
+        if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
             runCatching {
-                if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-                    GLES20.glDeleteTextures(1, intArrayOf(textureId), 0)
-                }
+                EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
             }
+        }
+
+        if (textureId != 0) {
+            runCatching { GLES20.glDeleteTextures(1, intArrayOf(textureId), 0) }
             textureId = 0
         }
-
-        // Delete watermark texture
         if (watermarkTextureId != 0) {
-            runCatching {
-                if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-                    GLES20.glDeleteTextures(1, intArrayOf(watermarkTextureId), 0)
-                }
-            }
+            runCatching { GLES20.glDeleteTextures(1, intArrayOf(watermarkTextureId), 0) }
             watermarkTextureId = 0
         }
-
-        // Delete screen capture program
         if (program != 0) {
-            runCatching {
-                if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-                    GLES20.glDeleteProgram(program)
-                }
-            }
+            runCatching { GLES20.glDeleteProgram(program) }
             program = 0
         }
-
-        // Delete watermark program
         if (watermarkProgram != 0) {
-            runCatching {
-                if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-                    GLES20.glDeleteProgram(watermarkProgram)
-                }
-            }
+            runCatching { GLES20.glDeleteProgram(watermarkProgram) }
             watermarkProgram = 0
         }
 
+        if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
+            runCatching {
+                EGL14.eglMakeCurrent(
+                    eglDisplay,
+                    EGL14.EGL_NO_SURFACE,
+                    EGL14.EGL_NO_SURFACE,
+                    EGL14.EGL_NO_CONTEXT
+                )
+            }
+        }
         if (eglSurface != EGL14.EGL_NO_SURFACE) {
             runCatching { EGL14.eglDestroySurface(eglDisplay, eglSurface) }
             eglSurface = EGL14.EGL_NO_SURFACE
         }
-
         if (eglContext != EGL14.EGL_NO_CONTEXT) {
             runCatching { EGL14.eglDestroyContext(eglDisplay, eglContext) }
             eglContext = EGL14.EGL_NO_CONTEXT
         }
-
         if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
             runCatching { EGL14.eglTerminate(eglDisplay) }
             eglDisplay = EGL14.EGL_NO_DISPLAY
@@ -656,7 +757,5 @@ class RegionCropRenderer {
         watermarkVertexBuffer = null
         watermarkTexCoordBuffer = null
         hasWatermark = false
-
-        LogManager.log(TAG, "release: complete")
     }
 }

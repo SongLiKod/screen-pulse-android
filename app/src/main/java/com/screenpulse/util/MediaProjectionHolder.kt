@@ -93,9 +93,9 @@ object MediaProjectionHolder {
     }
 
     /**
-     * Reuse the countdown keep-alive VirtualDisplay as the capture display.
-     * Creating a second display while the dummy still exists, or releasing the
-     * dummy first, can stop MediaProjection on Android 14+.
+     * Create the capture VirtualDisplay. Prefer a fresh display so encoder /
+     * SurfaceTexture consumers actually receive frames. Keep the dummy display
+     * until the new one exists so Android 14+ does not stop MediaProjection.
      */
     @Synchronized
     fun adoptOrCreateDisplay(
@@ -108,33 +108,32 @@ object MediaProjectionHolder {
         val p = projection ?: return null
         suppressStopCount++
         try {
-            val existing = dummyDisplay
-            if (existing != null) {
-                try {
-                    existing.resize(width, height, densityDpi)
-                    existing.setSurface(surface)
-                    dummyDisplay = null
-                    val reader = dummyReader
-                    dummyReader = null
-                    runCatching { reader?.close() }
-                    LogManager.log(
-                        LogManager.TAG_RECORD,
-                        "MediaProjectionHolder reused keep-alive display ${width}x$height"
-                    )
-                    return existing
-                } catch (e: Exception) {
-                    LogManager.log(
-                        LogManager.TAG_RECORD,
-                        "MediaProjectionHolder resize keep-alive failed, creating new display",
-                        e
-                    )
-                    dummyDisplay = null
-                    val reader = dummyReader
-                    dummyReader = null
-                    runCatching { existing.release() }
-                    runCatching { reader?.close() }
-                }
+            val created = runCatching {
+                p.createVirtualDisplay(
+                    name,
+                    width,
+                    height,
+                    densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    surface,
+                    null,
+                    null
+                )
+            }.onFailure {
+                LogManager.log(LogManager.TAG_RECORD, "createVirtualDisplay while parked failed", it)
+            }.getOrNull()
+            if (created != null) {
+                releaseDummyLocked()
+                LogManager.log(
+                    LogManager.TAG_RECORD,
+                    "MediaProjectionHolder created capture display ${width}x$height"
+                )
+                return created
             }
+
+            // Some devices allow only one VirtualDisplay. Drop the keep-alive
+            // display first, then create the capture display.
+            releaseDummyLocked()
             return p.createVirtualDisplay(
                 name,
                 width,

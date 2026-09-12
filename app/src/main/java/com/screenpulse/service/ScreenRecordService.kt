@@ -1112,17 +1112,19 @@ class ScreenRecordService : Service() {
     }
 
     private fun tryStartMuxer(muxer: MediaMuxer) {
-        if (!muxerStarted && videoTrackIndex != -1) {
-            if (audioTrackIndex != -1 && audioTrackIndex != -2) {
-                muxer.start()
-                muxerStarted = true
-                writePendingSamples(muxer)
-            } else if (recordingStartTime > 0 && System.currentTimeMillis() - recordingStartTime > 3000) {
-                LogManager.log(LogManager.TAG_RECORD, "Audio track not ready in time, starting muxer video-only")
-                muxer.start()
-                muxerStarted = true
-                writePendingSamples(muxer)
-            }
+        if (muxerStarted || videoTrackIndex == -1) return
+        val audioReady = audioTrackIndex != -1 && audioTrackIndex != -2
+        val audioUnavailable = audioCodec == null || audioTrackIndex == -2
+        val waitedLongEnough = recordingStartTime > 0 &&
+            System.currentTimeMillis() - recordingStartTime > 1000
+        if (audioReady || audioUnavailable || waitedLongEnough) {
+            muxer.start()
+            muxerStarted = true
+            writePendingSamples(muxer)
+            LogManager.log(
+                LogManager.TAG_RECORD,
+                "muxer started audioTrack=$audioTrackIndex audioReady=$audioReady"
+            )
         }
     }
 
@@ -1249,7 +1251,7 @@ class ScreenRecordService : Service() {
                 if (!muxerStarted && videoTrackIndex != -1) {
                     mediaMuxer?.start()
                     muxerStarted = true
-                    writePendingSamples(mediaMuxer!!)
+                    mediaMuxer?.let { writePendingSamples(it) }
                     LogManager.log(LogManager.TAG_RECORD, "handleStop: force start muxer (video-only)")
                 }
             } catch (e: Exception) {
