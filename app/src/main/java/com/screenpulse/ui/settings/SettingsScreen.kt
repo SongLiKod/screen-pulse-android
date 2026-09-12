@@ -63,6 +63,7 @@ fun SettingsScreen(
     val bitrateMode by settingsViewModel.bitrateMode.collectAsState()
     val language by settingsViewModel.language.collectAsState()
     val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
+    val floatingWindowPersistent by settingsViewModel.floatingWindowPersistent.collectAsState()
 
     var showBatteryDialog by remember { mutableStateOf(false) }
     var customWidthText by remember(customResolutionWidth) { mutableStateOf(customResolutionWidth.toString()) }
@@ -508,6 +509,41 @@ fun SettingsScreen(
                             )
                         )
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.floating_window_persistent), fontWeight = FontWeight.Medium)
+                        Text(
+                            stringResource(R.string.floating_window_persistent_desc),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = floatingWindowPersistent,
+                        onCheckedChange = { settingsViewModel.setFloatingWindowPersistent(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    )
                 }
             }
 

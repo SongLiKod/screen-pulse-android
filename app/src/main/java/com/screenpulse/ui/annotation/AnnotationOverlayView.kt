@@ -2,12 +2,13 @@ package com.screenpulse.ui.annotation
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-import androidx.core.content.ContextCompat
 import com.screenpulse.R
 
 class AnnotationOverlayView @JvmOverloads constructor(
@@ -17,16 +18,24 @@ class AnnotationOverlayView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     enum class AnnotationTool {
-        PEN, TEXT, ARROW, NONE
+        PEN, TEXT, ARROW, RECTANGLE, CIRCLE, NONE
+    }
+
+    enum class AnnotationColor(val colorInt: Int, val displayName: String) {
+        RED(Color.RED, "Red"),
+        GREEN(Color.parseColor("#FF2E7D32"), "Green"),
+        BLUE(Color.BLUE, "Blue"),
+        YELLOW(Color.YELLOW, "Yellow"),
+        WHITE(Color.WHITE, "White"),
+        BLACK(Color.BLACK, "Black")
     }
 
     private var currentTool = AnnotationTool.NONE
     private var isVisible = false
-
-    private val penColor = ContextCompat.getColor(context, R.color.annotation_pen_color)
+    private var currentColor: AnnotationColor = AnnotationColor.GREEN
 
     private val penPaint = Paint().apply {
-        color = penColor
+        color = currentColor.colorInt
         style = Paint.Style.STROKE
         strokeWidth = 6f
         isAntiAlias = true
@@ -35,16 +44,25 @@ class AnnotationOverlayView @JvmOverloads constructor(
     }
 
     private val arrowPaint = Paint().apply {
-        color = penColor
+        color = currentColor.colorInt
         style = Paint.Style.STROKE
         strokeWidth = 4f
         isAntiAlias = true
     }
 
     private val textPaint = Paint().apply {
-        color = penColor
+        color = currentColor.colorInt
         textSize = 48f
         isAntiAlias = true
+    }
+
+    private val shapePaint = Paint().apply {
+        color = currentColor.colorInt
+        style = Paint.Style.STROKE
+        strokeWidth = 4f
+        isAntiAlias = true
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
 
     private val drawings = mutableListOf<DrawingItem>()
@@ -55,6 +73,13 @@ class AnnotationOverlayView @JvmOverloads constructor(
     private var arrowEndY = 0f
     private var isDrawingArrow = false
 
+    // Shape drawing state
+    private var shapeStartX = 0f
+    private var shapeStartY = 0f
+    private var shapeEndX = 0f
+    private var shapeEndY = 0f
+    private var isDrawingShape = false
+
     data class DrawingItem(
         val tool: AnnotationTool,
         val path: Path? = null,
@@ -64,12 +89,23 @@ class AnnotationOverlayView @JvmOverloads constructor(
         val endY: Float = 0f,
         val text: String = "",
         val textX: Float = 0f,
-        val textY: Float = 0f
+        val textY: Float = 0f,
+        val color: Int = Color.GREEN
     )
 
     fun setTool(tool: AnnotationTool) {
         currentTool = tool
     }
+
+    fun setColor(color: AnnotationColor) {
+        currentColor = color
+        penPaint.color = color.colorInt
+        arrowPaint.color = color.colorInt
+        textPaint.color = color.colorInt
+        shapePaint.color = color.colorInt
+    }
+
+    fun getColor(): AnnotationColor = currentColor
 
     fun setVisible(visible: Boolean) {
         isVisible = visible
@@ -96,31 +132,88 @@ class AnnotationOverlayView @JvmOverloads constructor(
         if (!isVisible) return
 
         for (item in drawings) {
+            val paint = when (item.tool) {
+                AnnotationTool.PEN -> penPaint
+                AnnotationTool.ARROW -> arrowPaint
+                AnnotationTool.TEXT -> textPaint
+                AnnotationTool.RECTANGLE, AnnotationTool.CIRCLE -> shapePaint
+                AnnotationTool.NONE -> penPaint
+            }
+            val savedColor = paint.color
+            paint.color = item.color
+
             when (item.tool) {
                 AnnotationTool.PEN -> {
-                    item.path?.let { canvas.drawPath(it, penPaint) }
+                    item.path?.let { canvas.drawPath(it, paint) }
                 }
                 AnnotationTool.ARROW -> {
-                    drawArrow(canvas, item.startX, item.startY, item.endX, item.endY)
+                    drawArrow(canvas, item.startX, item.startY, item.endX, item.endY, paint)
                 }
                 AnnotationTool.TEXT -> {
-                    canvas.drawText(item.text, item.textX, item.textY, textPaint)
+                    canvas.drawText(item.text, item.textX, item.textY, paint)
+                }
+                AnnotationTool.RECTANGLE -> {
+                    val rect = RectF(
+                        minOf(item.startX, item.endX),
+                        minOf(item.startY, item.endY),
+                        maxOf(item.startX, item.endX),
+                        maxOf(item.startY, item.endY)
+                    )
+                    canvas.drawRect(rect, paint)
+                }
+                AnnotationTool.CIRCLE -> {
+                    val rect = RectF(
+                        minOf(item.startX, item.endX),
+                        minOf(item.startY, item.endY),
+                        maxOf(item.startX, item.endX),
+                        maxOf(item.startY, item.endY)
+                    )
+                    canvas.drawOval(rect, paint)
                 }
                 AnnotationTool.NONE -> {}
             }
+
+            paint.color = savedColor
         }
 
+        // Draw current pen path
         if (currentPath != null) {
             canvas.drawPath(currentPath!!, penPaint)
         }
 
+        // Draw current arrow preview
         if (isDrawingArrow) {
-            drawArrow(canvas, arrowStartX, arrowStartY, arrowEndX, arrowEndY)
+            drawArrow(canvas, arrowStartX, arrowStartY, arrowEndX, arrowEndY, arrowPaint)
+        }
+
+        // Draw current shape preview
+        if (isDrawingShape) {
+            when (currentTool) {
+                AnnotationTool.RECTANGLE -> {
+                    val rect = RectF(
+                        minOf(shapeStartX, shapeEndX),
+                        minOf(shapeStartY, shapeEndY),
+                        maxOf(shapeStartX, shapeEndX),
+                        maxOf(shapeStartY, shapeEndY)
+                    )
+                    canvas.drawRect(rect, shapePaint)
+                }
+                AnnotationTool.CIRCLE -> {
+                    val rect = RectF(
+                        minOf(shapeStartX, shapeEndX),
+                        minOf(shapeStartY, shapeEndY),
+                        maxOf(shapeStartX, shapeEndX),
+                        maxOf(shapeStartY, shapeEndY)
+                    )
+                    canvas.drawOval(rect, shapePaint)
+                }
+                else -> {}
+            }
         }
     }
 
-    private fun drawArrow(canvas: Canvas, sx: Float, sy: Float, ex: Float, ey: Float) {
-        canvas.drawLine(sx, sy, ex, ey, arrowPaint)
+    private fun drawArrow(canvas: Canvas, sx: Float, sy: Float, ex: Float, ey: Float, paint: Paint) {
+        canvas.drawLine(sx, sy, ex, ey, paint)
 
         val angle = Math.atan2((ey - sy).toDouble(), (ex - sx).toDouble())
         val arrowLength = 30f
@@ -130,8 +223,8 @@ class AnnotationOverlayView @JvmOverloads constructor(
         val x2 = (ex - arrowLength * Math.cos(angle + Math.PI / 6)).toFloat()
         val y2 = (ey - arrowLength * Math.sin(angle + Math.PI / 6)).toFloat()
 
-        canvas.drawLine(ex, ey, x1, y1, arrowPaint)
-        canvas.drawLine(ex, ey, x2, y2, arrowPaint)
+        canvas.drawLine(ex, ey, x1, y1, paint)
+        canvas.drawLine(ex, ey, x2, y2, paint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -141,6 +234,8 @@ class AnnotationOverlayView @JvmOverloads constructor(
             AnnotationTool.PEN -> handlePenTouch(event)
             AnnotationTool.ARROW -> handleArrowTouch(event)
             AnnotationTool.TEXT -> handleTextTouch(event)
+            AnnotationTool.RECTANGLE -> handleShapeTouch(event)
+            AnnotationTool.CIRCLE -> handleShapeTouch(event)
             AnnotationTool.NONE -> {}
         }
         return true
@@ -159,7 +254,11 @@ class AnnotationOverlayView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 currentPath?.let {
-                    drawings.add(DrawingItem(tool = AnnotationTool.PEN, path = Path(it)))
+                    drawings.add(DrawingItem(
+                        tool = AnnotationTool.PEN,
+                        path = Path(it),
+                        color = currentColor.colorInt
+                    ))
                 }
                 currentPath = null
                 invalidate()
@@ -189,7 +288,8 @@ class AnnotationOverlayView @JvmOverloads constructor(
                     startX = arrowStartX,
                     startY = arrowStartY,
                     endX = arrowEndX,
-                    endY = arrowEndY
+                    endY = arrowEndY,
+                    color = currentColor.colorInt
                 ))
                 isDrawingArrow = false
                 invalidate()
@@ -203,6 +303,37 @@ class AnnotationOverlayView @JvmOverloads constructor(
         }
     }
 
+    private fun handleShapeTouch(event: MotionEvent) {
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                shapeStartX = event.x
+                shapeStartY = event.y
+                shapeEndX = event.x
+                shapeEndY = event.y
+                isDrawingShape = true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                shapeEndX = event.x
+                shapeEndY = event.y
+                invalidate()
+            }
+            MotionEvent.ACTION_UP -> {
+                shapeEndX = event.x
+                shapeEndY = event.y
+                drawings.add(DrawingItem(
+                    tool = currentTool,
+                    startX = shapeStartX,
+                    startY = shapeStartY,
+                    endX = shapeEndX,
+                    endY = shapeEndY,
+                    color = currentColor.colorInt
+                ))
+                isDrawingShape = false
+                invalidate()
+            }
+        }
+    }
+
     var onTextPositionSelected: ((Float, Float) -> Unit)? = null
 
     fun addText(text: String, x: Float, y: Float) {
@@ -210,7 +341,8 @@ class AnnotationOverlayView @JvmOverloads constructor(
             tool = AnnotationTool.TEXT,
             text = text,
             textX = x,
-            textY = y
+            textY = y,
+            color = currentColor.colorInt
         ))
         invalidate()
     }

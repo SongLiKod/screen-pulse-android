@@ -97,6 +97,7 @@ class ScreenRecordService : Service() {
         const val EXTRA_CUSTOM_RESOLUTION_WIDTH = "custom_resolution_width"
         const val EXTRA_CUSTOM_RESOLUTION_HEIGHT = "custom_resolution_height"
         const val EXTRA_CUSTOM_COUNTDOWN_SECONDS = "custom_countdown_seconds"
+        const val EXTRA_FLOATING_WINDOW_PERSISTENT = "floating_window_persistent"
         const val CHANNEL_ID = "screen_pulse_recording"
         const val NOTIFICATION_ID = 1001
     }
@@ -119,9 +120,19 @@ class ScreenRecordService : Service() {
 
     private var videoTrackIndex = -1
     private var audioTrackIndex = -1
-    private var muxerStarted = false
+    @Volatile private var muxerStarted = false
     private var videoBufferInfo = MediaCodec.BufferInfo()
     private var audioBufferInfo = MediaCodec.BufferInfo()
+
+    // Buffer for video/audio frames that arrive before the muxer has started.
+    // Without this, frames produced between the first codec output and muxer.start()
+    // are silently dropped, resulting in missing initial video content.
+    private data class BufferedSample(
+        val trackIndex: Int,
+        val data: ByteBuffer,
+        val info: MediaCodec.BufferInfo
+    )
+    private val pendingSamples = mutableListOf<BufferedSample>()
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var countdownJob: Job? = null
@@ -155,6 +166,7 @@ class ScreenRecordService : Service() {
     private var recordHeight = 0
     private var recordDensityDpi = 0
     private var customSaveTreeUri = ""
+    private var floatingWindowPersistent = false
 
     private var stateCallback: RecordingStateCallback? = null
 
@@ -213,6 +225,7 @@ class ScreenRecordService : Service() {
         customResolutionWidth = intent.getIntExtra(EXTRA_CUSTOM_RESOLUTION_WIDTH, 1920)
         customResolutionHeight = intent.getIntExtra(EXTRA_CUSTOM_RESOLUTION_HEIGHT, 1080)
         customSaveTreeUri = intent.getStringExtra(EXTRA_CUSTOM_SAVE_TREE_URI) ?: ""
+        floatingWindowPersistent = intent.getBooleanExtra(EXTRA_FLOATING_WINDOW_PERSISTENT, false)
 
         val countdown = CountdownMode.fromValue(intent.getIntExtra(EXTRA_COUNTDOWN, 0))
         val countdownSeconds = when (countdown) {
@@ -223,6 +236,8 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateState(RecordingState.COUNTDOWN)
             syncFloatingWindow(RecordingState.COUNTDOWN)
             stateCallback?.onStateChanged(RecordingState.COUNTDOWN)
+            // Show fullscreen countdown overlay
+            startCountdownOverlay()
             startCountdown(countdownSeconds, resultCode, resultData)
         } else {
             startRecordingInternal(resultCode, resultData)
@@ -237,11 +252,49 @@ class ScreenRecordService : Service() {
                 stateCallback?.onCountdownTick(i)
                 // Send countdown update to floating window
                 sendCountdownToFloatingWindow(i)
+                // Send countdown update to fullscreen overlay
+                updateCountdownOverlay(i)
                 delay(1000L)
             }
             RecordingStateManager.updateCountdown(0)
             sendCountdownToFloatingWindow(0)
+            // Hide fullscreen countdown overlay
+            hideCountdownOverlay()
             startRecordingInternal(resultCode, resultData)
+        }
+    }
+
+    private fun startCountdownOverlay() {
+        try {
+            val intent = Intent(this, com.screenpulse.floatingwindow.FloatingCountdownService::class.java).apply {
+                action = com.screenpulse.floatingwindow.FloatingCountdownService.ACTION_SHOW
+            }
+            startService(intent)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "startCountdownOverlay failed", e)
+        }
+    }
+
+    private fun updateCountdownOverlay(remaining: Int) {
+        try {
+            val intent = Intent(this, com.screenpulse.floatingwindow.FloatingCountdownService::class.java).apply {
+                action = com.screenpulse.floatingwindow.FloatingCountdownService.ACTION_UPDATE
+                putExtra(com.screenpulse.floatingwindow.FloatingCountdownService.EXTRA_REMAINING, remaining)
+            }
+            startService(intent)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "updateCountdownOverlay failed", e)
+        }
+    }
+
+    private fun hideCountdownOverlay() {
+        try {
+            val intent = Intent(this, com.screenpulse.floatingwindow.FloatingCountdownService::class.java).apply {
+                action = com.screenpulse.floatingwindow.FloatingCountdownService.ACTION_HIDE
+            }
+            startService(intent)
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "hideCountdownOverlay failed", e)
         }
     }
 
@@ -556,33 +609,41 @@ class ScreenRecordService : Service() {
 
     private fun recreateVirtualDisplay() {
         if (virtualDisplay != null || encoderInputSurface == null) return
-        if (regionCropRenderer != null) {
-            // CUSTOM_REGION mode: recreate VirtualDisplay at full screen with renderer's surface
-            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-            val metrics = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay.getRealMetrics(metrics)
-            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "ScreenPulse",
-                metrics.widthPixels,
-                metrics.heightPixels,
-                metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                regionCropRenderer?.getInputSurface(),
-                null,
-                null
-            )
-        } else {
-            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "ScreenPulse",
-                recordWidth,
-                recordHeight,
-                recordDensityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                encoderInputSurface,
-                null,
-                null
-            )
+        try {
+            if (regionCropRenderer != null) {
+                // CUSTOM_REGION mode: recreate VirtualDisplay at full screen with renderer's surface
+                val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+                val metrics = DisplayMetrics()
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.getRealMetrics(metrics)
+                virtualDisplay = mediaProjection?.createVirtualDisplay(
+                    "ScreenPulse",
+                    metrics.widthPixels,
+                    metrics.heightPixels,
+                    metrics.densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    regionCropRenderer?.getInputSurface(),
+                    null,
+                    null
+                )
+            } else {
+                virtualDisplay = mediaProjection?.createVirtualDisplay(
+                    "ScreenPulse",
+                    recordWidth,
+                    recordHeight,
+                    recordDensityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    encoderInputSurface,
+                    null,
+                    null
+                )
+            }
+            if (virtualDisplay == null) {
+                LogManager.log(LogManager.TAG_RECORD, "recreateVirtualDisplay: createVirtualDisplay returned null (mediaProjection may be invalid)")
+            }
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "recreateVirtualDisplay: FAILED", e)
+            virtualDisplay = null
         }
     }
 
@@ -748,8 +809,7 @@ class ScreenRecordService : Service() {
                                 -2
                             }
                             if (videoTrackIndex != -1 && !muxerStarted && audioTrackIndex != -2) {
-                                muxer.start()
-                                muxerStarted = true
+                                tryStartMuxer(muxer)
                             }
                         }
 
@@ -757,6 +817,18 @@ class ScreenRecordService : Service() {
                             outputBuffer.position(audioBufferInfo.offset)
                             outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
                             muxer.writeSampleData(audioTrackIndex, outputBuffer, audioBufferInfo)
+                        } else if (audioTrackIndex != -1 && audioTrackIndex != -2) {
+                            // Muxer hasn't started yet – buffer the sample so it isn't lost.
+                            val copy = ByteBuffer.allocateDirect(audioBufferInfo.size)
+                            outputBuffer.position(audioBufferInfo.offset)
+                            outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
+                            copy.put(outputBuffer)
+                            copy.flip()
+                            val info = MediaCodec.BufferInfo()
+                            info.set(audioBufferInfo.offset, audioBufferInfo.size, audioBufferInfo.presentationTimeUs, audioBufferInfo.flags)
+                            synchronized(pendingSamples) {
+                                pendingSamples.add(BufferedSample(audioTrackIndex, copy, info))
+                            }
                         }
                     }
 
@@ -807,13 +879,26 @@ class ScreenRecordService : Service() {
                         if (videoTrackIndex == -1) {
                             val format = codec.outputFormat
                             videoTrackIndex = muxer.addTrack(format)
-                            tryStartMer(muxer)
+                            tryStartMuxer(muxer)
                         }
 
                         if (muxerStarted && videoTrackIndex != -1) {
                             outputBuffer.position(videoBufferInfo.offset)
                             outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
                             muxer.writeSampleData(videoTrackIndex, outputBuffer, videoBufferInfo)
+                        } else if (videoTrackIndex != -1) {
+                            // Muxer hasn't started yet – buffer the sample so it isn't lost.
+                            // Once the muxer starts, all buffered samples will be written.
+                            val copy = ByteBuffer.allocateDirect(videoBufferInfo.size)
+                            outputBuffer.position(videoBufferInfo.offset)
+                            outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
+                            copy.put(outputBuffer)
+                            copy.flip()
+                            val info = MediaCodec.BufferInfo()
+                            info.set(videoBufferInfo.offset, videoBufferInfo.size, videoBufferInfo.presentationTimeUs, videoBufferInfo.flags)
+                            synchronized(pendingSamples) {
+                                pendingSamples.add(BufferedSample(videoTrackIndex, copy, info))
+                            }
                         }
                     }
 
@@ -842,12 +927,23 @@ class ScreenRecordService : Service() {
                 if (videoTrackIndex == -1) {
                     val format = codec.outputFormat
                     videoTrackIndex = muxer.addTrack(format)
-                    tryStartMer(muxer)
+                    tryStartMuxer(muxer)
                 }
                 if (muxerStarted && videoTrackIndex != -1) {
                     outputBuffer.position(videoBufferInfo.offset)
                     outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
                     muxer.writeSampleData(videoTrackIndex, outputBuffer, videoBufferInfo)
+                } else if (videoTrackIndex != -1) {
+                    val copy = ByteBuffer.allocateDirect(videoBufferInfo.size)
+                    outputBuffer.position(videoBufferInfo.offset)
+                    outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
+                    copy.put(outputBuffer)
+                    copy.flip()
+                    val info = MediaCodec.BufferInfo()
+                    info.set(videoBufferInfo.offset, videoBufferInfo.size, videoBufferInfo.presentationTimeUs, videoBufferInfo.flags)
+                    synchronized(pendingSamples) {
+                        pendingSamples.add(BufferedSample(videoTrackIndex, copy, info))
+                    }
                 }
             }
             codec.releaseOutputBuffer(outputIndex, false)
@@ -869,14 +965,24 @@ class ScreenRecordService : Service() {
                 if (audioTrackIndex == -1 && !muxerStarted) {
                     audioTrackIndex = try { muxer.addTrack(codec.outputFormat) } catch (e: Exception) { -2 }
                     if (videoTrackIndex != -1 && !muxerStarted && audioTrackIndex != -2) {
-                        muxer.start()
-                        muxerStarted = true
+                        tryStartMuxer(muxer)
                     }
                 }
                 if (muxerStarted && audioTrackIndex != -1 && audioTrackIndex != -2) {
                     outputBuffer.position(audioBufferInfo.offset)
                     outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
                     muxer.writeSampleData(audioTrackIndex, outputBuffer, audioBufferInfo)
+                } else if (audioTrackIndex != -1 && audioTrackIndex != -2) {
+                    val copy = ByteBuffer.allocateDirect(audioBufferInfo.size)
+                    outputBuffer.position(audioBufferInfo.offset)
+                    outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
+                    copy.put(outputBuffer)
+                    copy.flip()
+                    val info = MediaCodec.BufferInfo()
+                    info.set(audioBufferInfo.offset, audioBufferInfo.size, audioBufferInfo.presentationTimeUs, audioBufferInfo.flags)
+                    synchronized(pendingSamples) {
+                        pendingSamples.add(BufferedSample(audioTrackIndex, copy, info))
+                    }
                 }
             }
             codec.releaseOutputBuffer(outputIndex, false)
@@ -885,16 +991,37 @@ class ScreenRecordService : Service() {
         return false
     }
 
-    private fun tryStartMer(muxer: MediaMuxer) {
+    private fun tryStartMuxer(muxer: MediaMuxer) {
         if (!muxerStarted && videoTrackIndex != -1) {
             if (audioTrackIndex != -1 && audioTrackIndex != -2) {
                 muxer.start()
                 muxerStarted = true
+                writePendingSamples(muxer)
             } else if (recordingStartTime > 0 && System.currentTimeMillis() - recordingStartTime > 3000) {
                 LogManager.log(LogManager.TAG_RECORD, "Audio track not ready in time, starting muxer video-only")
                 muxer.start()
                 muxerStarted = true
+                writePendingSamples(muxer)
             }
+        }
+    }
+
+    /**
+     * Write all buffered samples that were collected before the muxer started.
+     * Must be called immediately after muxer.start().
+     */
+    private fun writePendingSamples(muxer: MediaMuxer) {
+        synchronized(pendingSamples) {
+            if (pendingSamples.isEmpty()) return
+            LogManager.log(LogManager.TAG_RECORD, "Writing ${pendingSamples.size} buffered samples to muxer")
+            for (sample in pendingSamples) {
+                try {
+                    muxer.writeSampleData(sample.trackIndex, sample.data, sample.info)
+                } catch (e: Exception) {
+                    LogManager.log(LogManager.TAG_RECORD, "Failed to write buffered sample", e)
+                }
+            }
+            pendingSamples.clear()
         }
     }
 
@@ -904,8 +1031,12 @@ class ScreenRecordService : Service() {
         isPaused = true
         pausedDuration = System.currentTimeMillis()
         durationJob?.cancel()
-        runCatching { virtualDisplay?.release() }
-        virtualDisplay = null
+        // Note: Do NOT release VirtualDisplay during pause.
+        // Releasing it causes crashes on resume because:
+        // 1. mediaProjection may become invalid, making recreateVirtualDisplay() fail
+        // 2. RegionCropRenderer's SurfaceTexture may be in an inconsistent state
+        // 3. systemAudioRecord (MediaProjection-based) cannot restart after stop()
+        // Instead, the encode loop already skips frames when isPaused=true.
         runCatching { micAudioRecord?.stop() }
         runCatching { systemAudioRecord?.stop() }
         RecordingStateManager.updateState(RecordingState.PAUSED)
@@ -919,9 +1050,14 @@ class ScreenRecordService : Service() {
         LogManager.log(LogManager.TAG_RECORD, "RESUME requested")
         isPaused = false
         totalPausedDuration += System.currentTimeMillis() - pausedDuration
+        // Restart audio recording — mic and system audio
+        // Note: AudioRecord.startRecording() should work after stop() for mic,
+        // but systemAudioRecord (MediaProjection-based) may fail.
+        // Use runCatching to handle gracefully.
         runCatching { micAudioRecord?.startRecording() }
         runCatching { systemAudioRecord?.startRecording() }
-        recreateVirtualDisplay()
+        // VirtualDisplay was NOT released during pause, so no need to recreate it.
+        // The encode loop will resume processing frames automatically when isPaused=false.
         startDurationTracking()
         RecordingStateManager.updateState(RecordingState.RECORDING)
         syncFloatingWindow(RecordingState.RECORDING)
@@ -937,7 +1073,7 @@ class ScreenRecordService : Service() {
         isPaused = false
         countdownJob?.cancel()
         countdownJob = null
-        durationJob?.cancel()
+        hideCountdownOverlay()
         encodeJob?.cancel()
         audioEncodeJob?.cancel()
 
@@ -993,6 +1129,7 @@ class ScreenRecordService : Service() {
                 if (!muxerStarted && videoTrackIndex != -1) {
                     mediaMuxer?.start()
                     muxerStarted = true
+                    writePendingSamples(mediaMuxer!!)
                     LogManager.log(LogManager.TAG_RECORD, "handleStop: force start muxer (video-only)")
                 }
             } catch (e: Exception) {
@@ -1003,6 +1140,13 @@ class ScreenRecordService : Service() {
 
             // Capture file path before finalizeOutput may null-out outputFile
             val savedFile = outputFile
+
+            // Delete empty/invalid output files — they are useless and confuse users
+            if (savedFile != null && savedFile.exists() && savedFile.length() == 0L) {
+                LogManager.log(LogManager.TAG_RECORD, "Deleting empty output file: ${savedFile.absolutePath}")
+                savedFile.delete()
+            }
+
             finalizeOutput()
 
             // Post UI/state updates back to main thread
@@ -1022,7 +1166,16 @@ class ScreenRecordService : Service() {
                 stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingPipService::class.java))
                 stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingWatermarkService::class.java))
                 stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingRegionService::class.java))
-                stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingWindowService::class.java))
+                stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingCountdownService::class.java))
+
+                // Check if floating window persistent mode is enabled
+                if (floatingWindowPersistent) {
+                    LogManager.log(LogManager.TAG_RECORD, "Floating window persistent mode: keeping floating window alive")
+                    // Update floating window state to IDLE instead of stopping it
+                    syncFloatingWindow(RecordingState.IDLE)
+                } else {
+                    stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingWindowService::class.java))
+                }
 
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -1255,13 +1408,24 @@ class ScreenRecordService : Service() {
         systemAudioRecord = null
 
         // Stop the muxer to write the moov atom, then force-sync the file to disk.
+        // If the muxer was never started (no frames produced), stop() will throw –
+        // that's expected and handled by the runCatching block.
         runCatching {
-            mediaMuxer?.stop()
-            LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stopped OK")
+            if (muxerStarted) {
+                mediaMuxer?.stop()
+                LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stopped OK")
+            } else {
+                LogManager.log(LogManager.TAG_RECORD, "cleanup: muxer was never started, skipping stop()")
+            }
         }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer stop failed", it) }
         runCatching { mediaMuxer?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer release failed", it) }
         mediaMuxer = null
         muxerStarted = false
+
+        // Clear pending samples
+        synchronized(pendingSamples) {
+            pendingSamples.clear()
+        }
 
         // Force the output file to disk so the moov atom is guaranteed to be persisted.
         runCatching {

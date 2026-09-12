@@ -30,6 +30,8 @@ class FloatingWindowService : Service() {
         const val EXTRA_COUNTDOWN_REMAINING = "countdown_remaining"
         const val ACTION_HIDE = "com.screenpulse.floating.ACTION_HIDE"
         const val ACTION_SHOW = "com.screenpulse.floating.ACTION_SHOW"
+        const val ACTION_SHOW_PERSISTENT = "com.screenpulse.floating.ACTION_SHOW_PERSISTENT"
+        const val EXTRA_PERSISTENT = "persistent"
     }
 
     private var windowManager: WindowManager? = null
@@ -37,6 +39,8 @@ class FloatingWindowService : Service() {
     private var layoutParams: WindowManager.LayoutParams? = null
     private var isAdded = false
     private var currentState = RecordingState.IDLE
+    private var isPersistentMode = false
+    private var isCollapsed = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -64,6 +68,16 @@ class FloatingWindowService : Service() {
             ACTION_SHOW -> {
                 LogManager.log(LogManager.TAG_FLOAT, "show floating window")
                 addFloatingView()
+            }
+            ACTION_SHOW_PERSISTENT -> {
+                isPersistentMode = intent.getBooleanExtra(EXTRA_PERSISTENT, false)
+                LogManager.log(LogManager.TAG_FLOAT, "show persistent floating window, persistent=$isPersistentMode")
+                if (floatingView == null) {
+                    createFloatingView()
+                } else {
+                    addFloatingView()
+                }
+                updateFloatingIcon()
             }
             else -> LogManager.log(LogManager.TAG_FLOAT, "onStartCommand action=${intent?.action}")
         }
@@ -159,11 +173,40 @@ class FloatingWindowService : Service() {
             startService(intent)
         }
 
+        // Collapse/expand button (eye icon)
         floatingView?.findViewById<View>(R.id.floating_hide_btn)?.setOnClickListener {
-            removeFloatingView()
+            toggleCollapse()
         }
 
         addFloatingView()
+    }
+
+    /**
+     * Toggle between collapsed and expanded states.
+     * Collapsed: only show the main action button (pause/record)
+     * Expanded: show all buttons (duration, screenshot, annotation, stop, collapse)
+     */
+    private fun toggleCollapse() {
+        isCollapsed = !isCollapsed
+        val hideBtn = floatingView?.findViewById<ImageView>(R.id.floating_hide_btn)
+        val durationView = floatingView?.findViewById<View>(R.id.floating_duration)
+        val screenshotBtn = floatingView?.findViewById<View>(R.id.floating_screenshot_btn)
+        val annotationBtn = floatingView?.findViewById<View>(R.id.floating_annotation_btn)
+        val stopBtn = floatingView?.findViewById<View>(R.id.floating_stop_btn)
+
+        if (isCollapsed) {
+            // Collapse: hide all except the main button and change eye icon to expand
+            hideBtn?.setImageResource(R.drawable.ic_expand)
+            hideBtn?.visibility = View.VISIBLE
+            durationView?.visibility = View.GONE
+            screenshotBtn?.visibility = View.GONE
+            annotationBtn?.visibility = View.GONE
+            stopBtn?.visibility = View.GONE
+        } else {
+            // Expand: restore visibility based on current state
+            hideBtn?.setImageResource(R.drawable.ic_hide)
+            updateFloatingIcon()
+        }
     }
 
     private fun addFloatingView() {
@@ -211,7 +254,7 @@ class FloatingWindowService : Service() {
     private fun updateDuration(durationMs: Long) {
         val durationView = floatingView?.findViewById<android.widget.TextView>(R.id.floating_duration) ?: return
         val isRecording = currentState == RecordingState.RECORDING || currentState == RecordingState.PAUSED
-        if (isRecording && durationMs > 0) {
+        if (isRecording && durationMs > 0 && !isCollapsed) {
             val hours = durationMs / 3600000
             val minutes = (durationMs % 3600000) / 60000
             val seconds = (durationMs % 60000) / 1000
@@ -227,13 +270,8 @@ class FloatingWindowService : Service() {
     }
 
     private fun updateCountdown(remaining: Int) {
-        val durationView = floatingView?.findViewById<android.widget.TextView>(R.id.floating_duration) ?: return
-        if (currentState == RecordingState.COUNTDOWN && remaining > 0) {
-            durationView.text = remaining.toString()
-            durationView.visibility = View.VISIBLE
-        } else if (currentState != RecordingState.RECORDING && currentState != RecordingState.PAUSED) {
-            durationView.visibility = View.GONE
-        }
+        // Countdown is now displayed as a fullscreen overlay by FloatingCountdownService.
+        // No need to show countdown in the floating window bar.
     }
 
     private fun updateFloatingIcon() {
@@ -253,6 +291,18 @@ class FloatingWindowService : Service() {
             durationView?.visibility = View.GONE
         }
 
+        // If collapsed, only show main button + expand icon
+        if (isCollapsed) {
+            val hideBtn = floatingView?.findViewById<ImageView>(R.id.floating_hide_btn)
+            hideBtn?.setImageResource(R.drawable.ic_expand)
+            hideBtn?.visibility = View.VISIBLE
+            durationView?.visibility = View.GONE
+            floatingView?.findViewById<View>(R.id.floating_screenshot_btn)?.visibility = View.GONE
+            floatingView?.findViewById<View>(R.id.floating_annotation_btn)?.visibility = View.GONE
+            floatingView?.findViewById<View>(R.id.floating_stop_btn)?.visibility = View.GONE
+            return
+        }
+
         val screenshotBtn = floatingView?.findViewById<View>(R.id.floating_screenshot_btn)
         val annotationBtn = floatingView?.findViewById<View>(R.id.floating_annotation_btn)
         val stopBtn = floatingView?.findViewById<View>(R.id.floating_stop_btn)
@@ -262,10 +312,17 @@ class FloatingWindowService : Service() {
             annotationBtn?.visibility = View.VISIBLE
             stopBtn?.visibility = View.VISIBLE
             hideBtn?.visibility = View.VISIBLE
+            hideBtn?.let { (it as? ImageView)?.setImageResource(R.drawable.ic_hide) }
         } else if (currentState == RecordingState.COUNTDOWN) {
             screenshotBtn?.visibility = View.GONE
             annotationBtn?.visibility = View.GONE
             stopBtn?.visibility = View.VISIBLE
+            hideBtn?.visibility = View.GONE
+        } else if (currentState == RecordingState.IDLE && isPersistentMode) {
+            // Persistent mode: show only the record button (pause_btn acts as record)
+            screenshotBtn?.visibility = View.GONE
+            annotationBtn?.visibility = View.GONE
+            stopBtn?.visibility = View.GONE
             hideBtn?.visibility = View.GONE
         } else {
             screenshotBtn?.visibility = View.GONE

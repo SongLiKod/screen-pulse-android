@@ -282,12 +282,16 @@ class RegionCropRenderer {
         }
 
         try {
-            surfaceTexture?.updateTexImage()
-
+            // IMPORTANT: eglMakeCurrent MUST be called before updateTexImage(),
+            // because updateTexImage() requires a valid OpenGL context to be current
+            // on the calling thread. Without this, the texture update fails silently
+            // and no frames are rendered to the encoder surface.
             if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
                 LogManager.log(TAG, "drawFrame: eglMakeCurrent failed")
                 return false
             }
+
+            surfaceTexture?.updateTexImage()
 
             val texMatrix = FloatArray(16)
             surfaceTexture?.getTransformMatrix(texMatrix)

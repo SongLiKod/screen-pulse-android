@@ -91,6 +91,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val customRegion: StateFlow<CustomRegion> = repository.customRegion
         .stateIn(viewModelScope, SharingStarted.Eagerly, CustomRegion(0, 0, 0, 0))
 
+    val floatingWindowPersistent: StateFlow<Boolean> = repository.floatingWindowPersistent
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { repository.setThemeMode(mode) }
     fun setAudioMode(mode: AudioMode) = viewModelScope.launch { repository.setAudioMode(mode) }
     fun setResolution(res: Resolution) = viewModelScope.launch { repository.setResolution(res) }
@@ -119,6 +122,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setCustomResolutionHeight(height: Int) = viewModelScope.launch { repository.setCustomResolutionHeight(height) }
     fun setBitrateMode(mode: BitrateMode) = viewModelScope.launch { repository.setBitrateMode(mode) }
     fun setCustomRegion(region: CustomRegion) = viewModelScope.launch { repository.setCustomRegion(region) }
+    fun setFloatingWindowPersistent(enabled: Boolean) = viewModelScope.launch { repository.setFloatingWindowPersistent(enabled) }
 
     fun setLanguage(language: Language) = viewModelScope.launch {
         repository.setLanguage(language)
