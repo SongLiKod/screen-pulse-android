@@ -398,12 +398,13 @@ class ScreenRecordService : Service() {
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
+        prepareCustomRegion(metrics.widthPixels, metrics.heightPixels)
 
         val width: Int
         val height: Int
         if (currentResolution == Resolution.CUSTOM) {
-            width = customResolutionWidth
-            height = customResolutionHeight
+            width = alignForCodec(customResolutionWidth)
+            height = alignForCodec(customResolutionHeight)
         } else {
             // Adapt resolution to device orientation: Resolution enum values are landscape,
             // but the device may be in portrait — swap width/height to match.
@@ -420,29 +421,36 @@ class ScreenRecordService : Service() {
             }
         }
 
+        val useCustomRegion = currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0
+        val captureWidth = if (useCustomRegion) metrics.widthPixels else width
+        val captureHeight = if (useCustomRegion) metrics.heightPixels else height
+        val codecWidth = if (useCustomRegion) customWidth else width
+        val codecHeight = if (useCustomRegion) customHeight else height
+
         // Guard against double-start: if already recording or stopping, bail out
         if (isRecording || isStopping) {
             LogManager.log(LogManager.TAG_RECORD, "startRecordingInternal skipped: isRecording=$isRecording isStopping=$isStopping")
             RecordingStateManager.updateState(RecordingState.IDLE)
+            syncFloatingWindow(RecordingState.IDLE)
             return
         }
 
         outputFile = createOutputFile()
         LogManager.log(LogManager.TAG_RECORD,
-            "start recording: res=${currentResolution.value} ${width}x$height fps=${currentFrameRate.value} " +
+            "start recording: res=${currentResolution.value} capture=${captureWidth}x$captureHeight " +
+            "codec=${codecWidth}x$codecHeight fps=${currentFrameRate.value} " +
             "bitrate=${
                 if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(currentResolution, currentFrameRate)
-            } audioMode=${currentAudioMode} recordMode=${currentRecordMode} out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
+            } audioMode=${currentAudioMode} recordMode=${currentRecordMode} " +
+            "region=${customOffsetX},${customOffsetY} ${customWidth}x$customHeight " +
+            "out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
 
         try {
             NativeBridge.nativeInit()
 
             setupMediaMuxer()
-            // For CUSTOM_REGION mode, configure MediaCodec at crop region size (not full screen)
-            val codecWidth = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) customWidth else width
-            val codecHeight = if (currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0) customHeight else height
             setupMediaCodec(codecWidth, codecHeight)
-            setupVirtualDisplay(width, height, metrics.densityDpi)
+            setupVirtualDisplay(captureWidth, captureHeight, metrics.densityDpi)
 
             // Set isRecording BEFORE starting encode loops so the while-loop condition passes.
             isRecording = true
@@ -494,10 +502,52 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "Recording setup FAILED", e)
             e.printStackTrace()
             isRecording = false
+            hideCountdownOverlay()
             cleanup()
             RecordingStateManager.updateState(RecordingState.IDLE)
+            syncFloatingWindow(RecordingState.IDLE)
             stateCallback?.onError(e.message ?: "Recording failed")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }
+    }
+
+    /**
+     * H.264 encoders require even dimensions; many devices need multiples of 16.
+     */
+    private fun alignForCodec(value: Int): Int = (value / 16 * 16).coerceAtLeast(16)
+
+    /**
+     * Clamp the saved region to the current screen and align it for MediaCodec.
+     * Invalid / empty regions fall back to full-screen capture so overlay start still works.
+     */
+    private fun prepareCustomRegion(screenWidth: Int, screenHeight: Int) {
+        if (currentRecordMode != RecordMode.CUSTOM_REGION) return
+        if (customWidth <= 0 || customHeight <= 0 || screenWidth <= 0 || screenHeight <= 0) {
+            LogManager.log(LogManager.TAG_RECORD, "custom region invalid (${customWidth}x$customHeight), fallback to full screen")
+            currentRecordMode = RecordMode.FULL_SCREEN
+            customWidth = 0
+            customHeight = 0
+            customOffsetX = 0
+            customOffsetY = 0
+            return
+        }
+        customOffsetX = customOffsetX.coerceIn(0, (screenWidth - 1).coerceAtLeast(0))
+        customOffsetY = customOffsetY.coerceIn(0, (screenHeight - 1).coerceAtLeast(0))
+        customWidth = customWidth.coerceAtMost(screenWidth - customOffsetX).coerceAtLeast(1)
+        customHeight = customHeight.coerceAtMost(screenHeight - customOffsetY).coerceAtLeast(1)
+        customWidth = alignForCodec(customWidth)
+        customHeight = alignForCodec(customHeight)
+        if (customOffsetX + customWidth > screenWidth) {
+            customOffsetX = (screenWidth - customWidth).coerceAtLeast(0)
+        }
+        if (customOffsetY + customHeight > screenHeight) {
+            customOffsetY = (screenHeight - customHeight).coerceAtLeast(0)
+        }
+        LogManager.log(
+            LogManager.TAG_RECORD,
+            "custom region prepared: $customOffsetX,$customOffsetY ${customWidth}x$customHeight screen=${screenWidth}x$screenHeight"
+        )
     }
 
     private fun setupMediaMuxer() {
@@ -590,6 +640,9 @@ class ScreenRecordService : Service() {
 
             val renderer = RegionCropRenderer()
             if (!renderer.init(encoderInputSurface!!, width, height, cropX, cropY, cropWidth, cropHeight)) {
+                if (currentRecordMode == RecordMode.CUSTOM_REGION) {
+                    throw RuntimeException("RegionCropRenderer init failed for custom region")
+                }
                 LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: RegionCropRenderer init failed, falling back to direct")
                 regionCropRenderer = null
                 recordWidth = width
