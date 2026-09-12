@@ -57,6 +57,7 @@ import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.jni.NativeBridge
 import com.screenpulse.shortcut.RecordingStateManager
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.RecordingCache
 import kotlinx.coroutines.*
 import java.io.File
 import java.nio.ByteBuffer
@@ -314,6 +315,9 @@ class ScreenRecordService : Service() {
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_RECORD, "getMediaProjection FAILED", e)
             e.printStackTrace()
+            // Clear the cached MediaProjection authorization since it's invalid,
+            // so the floating window won't try to use it again.
+            RecordingCache.clear()
             RecordingStateManager.updateState(RecordingState.IDLE)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()

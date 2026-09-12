@@ -41,6 +41,7 @@ import com.screenpulse.viewmodel.RecordingViewModel
 import com.screenpulse.viewmodel.SettingsViewModel
 import com.screenpulse.util.LogManager
 import com.screenpulse.util.ProjectionRequestBus
+import com.screenpulse.util.RecordingCache
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.concurrent.TimeUnit
@@ -145,6 +146,39 @@ fun HomeScreen(
                     putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data!!)
                 })
             } else {
+                // Cache the MediaProjection authorization and recording config
+                // so the floating window can start recording directly without opening the app.
+                RecordingCache.save(
+                    code = result.resultCode,
+                    data = result.data!!,
+                    config = RecordingCache.Config(
+                        audioMode = audioMode.value,
+                        recordMode = recordMode.value,
+                        countdownMode = countdownMode.value,
+                        customCountdownSeconds = customCountdownSeconds,
+                        resolution = resolution.value,
+                        frameRate = frameRate.value,
+                        bitrate = bitrate,
+                        bitrateMode = bitrateMode.value,
+                        compressionMode = compressionMode.value,
+                        systemVolume = systemVolume,
+                        micVolume = micVolume,
+                        watermarkEnabled = watermarkEnabled,
+                        watermarkText = watermarkText,
+                        watermarkType = watermarkType.value,
+                        watermarkImageUri = watermarkImageUri,
+                        pipEnabled = pipEnabled,
+                        pipSize = pipSize,
+                        customResolutionWidth = customResolutionWidth,
+                        customResolutionHeight = customResolutionHeight,
+                        regionWidth = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.width else 0,
+                        regionHeight = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.height else 0,
+                        regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetX else 0,
+                        regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegionData.offsetY else 0,
+                        customSaveTreeUri = customSaveTreeUri,
+                        floatingWindowPersistent = floatingWindowPersistent
+                    )
+                )
                 startRecording(
                     context = context,
                     resultCode = result.resultCode,
