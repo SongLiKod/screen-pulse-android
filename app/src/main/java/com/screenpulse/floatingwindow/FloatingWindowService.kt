@@ -56,6 +56,11 @@ class FloatingWindowService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // CRITICAL: Start foreground service IMMEDIATELY on Android 14+.
+        // The system kills services that don't call startForeground() within ~5 seconds
+        // of onStartCommand(). This must be called before any other work.
+        startForegroundIfNeeded()
+
         when (intent?.action) {
             ACTION_UPDATE_STATE -> {
                 val stateValue = intent.getIntExtra(EXTRA_STATE, 0)
@@ -66,7 +71,9 @@ class FloatingWindowService : Service() {
             ACTION_HIDE -> {
                 LogManager.log(LogManager.TAG_FLOAT, "hide floating window")
                 removeFloatingView()
-                stopForegroundIfNeeded()
+                // Do NOT stop foreground here — keep the service alive so it can be
+                // re-shown quickly. The service will be stopped by ScreenRecordService
+                // when recording finishes, or by the system when the app is truly done.
             }
             ACTION_UPDATE_DURATION -> {
                 val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
@@ -78,7 +85,11 @@ class FloatingWindowService : Service() {
             }
             ACTION_SHOW -> {
                 LogManager.log(LogManager.TAG_FLOAT, "show floating window")
-                addFloatingView()
+                if (floatingView == null) {
+                    createFloatingView()
+                } else {
+                    addFloatingView()
+                }
             }
             ACTION_SHOW_PERSISTENT -> {
                 isPersistentMode = intent.getBooleanExtra(EXTRA_PERSISTENT, false)
@@ -207,8 +218,6 @@ class FloatingWindowService : Service() {
 
     private fun addFloatingView() {
         if (floatingView == null || isAdded) return
-        // Ensure service is foreground so it survives when app goes to background
-        startForegroundIfNeeded()
         windowManager?.addView(floatingView, layoutParams)
         isAdded = true
     }
@@ -341,17 +350,7 @@ class FloatingWindowService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
         isForeground = true
-    }
-
-    private fun stopForegroundIfNeeded() {
-        if (!isForeground) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-        isForeground = false
+        LogManager.log(LogManager.TAG_FLOAT, "foreground service started")
     }
 
     private fun createNotificationChannel() {
@@ -372,8 +371,17 @@ class FloatingWindowService : Service() {
     override fun onDestroy() {
         LogManager.log(LogManager.TAG_FLOAT, "floating window destroyed")
         removeFloatingView()
-        stopForegroundIfNeeded()
         floatingView = null
+        // Stop foreground when service is truly destroyed
+        if (isForeground) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+            isForeground = false
+        }
         super.onDestroy()
     }
 }
