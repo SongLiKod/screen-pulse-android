@@ -147,6 +147,10 @@ class ScreenRecordService : Service() {
     private var audioCodec: MediaCodec? = null
     private var audioRecordBuffer: ByteArray? = null
     private var audioPtsUs = 0L
+    @Volatile private var recordingPtsBaseNs = 0L
+    private var lastAudioMuxPtsUs = -1L
+    private var lastVideoMuxPtsUs = -1L
+    private val ptsLock = Any()
 
     private var currentResolution = Resolution.R1080P
     private var currentFrameRate = FrameRate.FPS_30
@@ -457,7 +461,7 @@ class ScreenRecordService : Service() {
 
         try {
             NativeBridge.nativeInit()
-            audioPtsUs = 0L
+            resetPtsClock()
 
             setupMediaMuxer()
             setupMediaCodec(codecWidth, codecHeight)
@@ -1056,6 +1060,44 @@ class ScreenRecordService : Service() {
         }
     }
 
+    private fun resetPtsClock() {
+        recordingPtsBaseNs = System.nanoTime()
+        audioPtsUs = 0L
+        lastAudioMuxPtsUs = -1L
+        lastVideoMuxPtsUs = -1L
+    }
+
+    private fun capturePtsUs(): Long {
+        val base = recordingPtsBaseNs
+        if (base == 0L) return 0L
+        return ((System.nanoTime() - base) / 1000L).coerceAtLeast(0L)
+    }
+
+    private fun toRelativePts(rawPtsUs: Long): Long {
+        if (rawPtsUs <= 0L) return 0L
+        val baseUs = recordingPtsBaseNs / 1000L
+        val elapsed = capturePtsUs()
+        val fromBase = rawPtsUs - baseUs
+        val absDelta = kotlin.math.abs(fromBase - elapsed)
+        val relDelta = kotlin.math.abs(rawPtsUs - elapsed)
+        return if (absDelta <= relDelta) fromBase.coerceAtLeast(0L) else rawPtsUs
+    }
+
+    private fun applyMuxPts(info: MediaCodec.BufferInfo, trackIndex: Int) {
+        if (info.size <= 0) return
+        synchronized(ptsLock) {
+            val relative = toRelativePts(info.presentationTimeUs)
+            val last = if (trackIndex == audioTrackIndex) lastAudioMuxPtsUs else lastVideoMuxPtsUs
+            val pts = if (relative <= last) last + 1L else relative
+            info.presentationTimeUs = pts
+            if (trackIndex == audioTrackIndex) {
+                lastAudioMuxPtsUs = pts
+            } else {
+                lastVideoMuxPtsUs = pts
+            }
+        }
+    }
+
     private fun applyPcmVolume(data: ByteArray, size: Int, volume: Int) {
         if (volume == 100 || size < 2) return
         val gain = volume / 100f
@@ -1076,8 +1118,10 @@ class ScreenRecordService : Service() {
             val inputBuffer = codec.getInputBuffer(inputIndex) ?: return
             inputBuffer.clear()
             inputBuffer.put(data, 0, size)
-            val pts = audioPtsUs
-            audioPtsUs += size / 2 * 1_000_000L / 44100L
+            val durationUs = (size / 2 * 1_000_000L / 44100L).coerceAtLeast(1L)
+            val wallPts = capturePtsUs()
+            val pts = if (wallPts > audioPtsUs) wallPts else audioPtsUs + durationUs
+            audioPtsUs = pts
             codec.queueInputBuffer(inputIndex, 0, size, pts, 0)
         }
 
@@ -1115,9 +1159,9 @@ class ScreenRecordService : Service() {
                         if (muxerStarted && audioTrackIndex != -1 && audioTrackIndex != -2) {
                             outputBuffer.position(audioBufferInfo.offset)
                             outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
+                            applyMuxPts(audioBufferInfo, audioTrackIndex)
                             muxer.writeSampleData(audioTrackIndex, outputBuffer, audioBufferInfo)
                         } else if (audioTrackIndex != -1 && audioTrackIndex != -2) {
-                            // Muxer hasn't started yet – buffer the sample so it isn't lost.
                             val copy = ByteBuffer.allocateDirect(audioBufferInfo.size)
                             outputBuffer.position(audioBufferInfo.offset)
                             outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
@@ -1184,10 +1228,9 @@ class ScreenRecordService : Service() {
                         if (muxerStarted && videoTrackIndex != -1) {
                             outputBuffer.position(videoBufferInfo.offset)
                             outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
+                            applyMuxPts(videoBufferInfo, videoTrackIndex)
                             muxer.writeSampleData(videoTrackIndex, outputBuffer, videoBufferInfo)
                         } else if (videoTrackIndex != -1) {
-                            // Muxer hasn't started yet – buffer the sample so it isn't lost.
-                            // Once the muxer starts, all buffered samples will be written.
                             val copy = ByteBuffer.allocateDirect(videoBufferInfo.size)
                             outputBuffer.position(videoBufferInfo.offset)
                             outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
@@ -1231,6 +1274,7 @@ class ScreenRecordService : Service() {
                 if (muxerStarted && videoTrackIndex != -1) {
                     outputBuffer.position(videoBufferInfo.offset)
                     outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
+                    applyMuxPts(videoBufferInfo, videoTrackIndex)
                     muxer.writeSampleData(videoTrackIndex, outputBuffer, videoBufferInfo)
                 } else if (videoTrackIndex != -1) {
                     val copy = ByteBuffer.allocateDirect(videoBufferInfo.size)
@@ -1270,6 +1314,7 @@ class ScreenRecordService : Service() {
                 if (muxerStarted && audioTrackIndex != -1 && audioTrackIndex != -2) {
                     outputBuffer.position(audioBufferInfo.offset)
                     outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
+                    applyMuxPts(audioBufferInfo, audioTrackIndex)
                     muxer.writeSampleData(audioTrackIndex, outputBuffer, audioBufferInfo)
                 } else if (audioTrackIndex != -1 && audioTrackIndex != -2) {
                     val copy = ByteBuffer.allocateDirect(audioBufferInfo.size)
@@ -1317,6 +1362,7 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "Writing ${pendingSamples.size} buffered samples to muxer")
             for (sample in pendingSamples) {
                 try {
+                    applyMuxPts(sample.info, sample.trackIndex)
                     muxer.writeSampleData(sample.trackIndex, sample.data, sample.info)
                 } catch (e: Exception) {
                     LogManager.log(LogManager.TAG_RECORD, "Failed to write buffered sample", e)
@@ -1723,6 +1769,7 @@ class ScreenRecordService : Service() {
         runCatching { mediaMuxer?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer release failed", it) }
         mediaMuxer = null
         muxerStarted = false
+        resetPtsClock()
 
         // Clear pending samples
         synchronized(pendingSamples) {
