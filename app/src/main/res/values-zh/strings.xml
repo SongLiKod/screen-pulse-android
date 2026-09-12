@@ -205,6 +205,8 @@
     <string name="tool_text">文字</string>
     <string name="annotation_add_text">添加文字</string>
     <string name="annotation_enter_text">请输入文字</string>
+    <string name="floating_window_channel">悬浮窗</string>
+    <string name="floating_window_notification">悬浮窗运行中</string>
 
     <string name="language_follow_system">跟随系统</string>
     <string name="language_english">English</string>

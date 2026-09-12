@@ -205,6 +205,8 @@
     <string name="tool_text">Text</string>
     <string name="annotation_add_text">Add Text</string>
     <string name="annotation_enter_text">Enter text</string>
+    <string name="floating_window_channel">Floating Window</string>
+    <string name="floating_window_notification">Floating window is active</string>
 
     <string name="language_follow_system">Follow System</string>
     <string name="language_english">English</string>

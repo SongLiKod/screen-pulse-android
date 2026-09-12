@@ -1,6 +1,8 @@
 package com.screenpulse.floatingwindow
 
 import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -8,12 +10,12 @@ import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.content.pm.ServiceInfo
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
-import android.widget.LinearLayout
+import androidx.core.app.NotificationCompat
 import com.screenpulse.R
 import com.screenpulse.service.ScreenRecordService
 import com.screenpulse.viewmodel.RecordingState
@@ -32,6 +34,9 @@ class FloatingWindowService : Service() {
         const val ACTION_SHOW = "com.screenpulse.floating.ACTION_SHOW"
         const val ACTION_SHOW_PERSISTENT = "com.screenpulse.floating.ACTION_SHOW_PERSISTENT"
         const val EXTRA_PERSISTENT = "persistent"
+
+        private const val CHANNEL_ID = "screen_pulse_floating"
+        private const val NOTIFICATION_ID = 200
     }
 
     private var windowManager: WindowManager? = null
@@ -41,6 +46,11 @@ class FloatingWindowService : Service() {
     private var currentState = RecordingState.IDLE
     private var isPersistentMode = false
     private var isCollapsed = false
+    private var isForeground = false
+
+    // Drag state: store the initial layout position when drag starts
+    private var dragStartX = 0
+    private var dragStartY = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -50,12 +60,13 @@ class FloatingWindowService : Service() {
             ACTION_UPDATE_STATE -> {
                 val stateValue = intent.getIntExtra(EXTRA_STATE, 0)
                 currentState = RecordingState.entries[stateValue]
-                LogManager.log(LogManager.TAG_FLOAT, "state update -> ${currentState}")
+                LogManager.log(LogManager.TAG_FLOAT, "state update -> $currentState")
                 updateFloatingIcon()
             }
             ACTION_HIDE -> {
                 LogManager.log(LogManager.TAG_FLOAT, "hide floating window")
                 removeFloatingView()
+                stopForegroundIfNeeded()
             }
             ACTION_UPDATE_DURATION -> {
                 val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
@@ -116,31 +127,17 @@ class FloatingWindowService : Service() {
             y = 200
         }
 
-        updateFloatingIcon()
-
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
-
-        // Drag on the entire floating bar
-        floatingView?.findViewById<View>(R.id.floating_root)?.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = layoutParams?.x ?: 0
-                    initialY = layoutParams?.y ?: 0
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    layoutParams?.x = initialX + (event.rawX - initialTouchX).toInt()
-                    layoutParams?.y = initialY + (event.rawY - initialTouchY).toInt()
-                    windowManager?.updateViewLayout(floatingView, layoutParams)
-                    true
-                }
-                MotionEvent.ACTION_UP -> true
-                else -> false
+        // Use DraggableLinearLayout for drag handling — clicks go to children automatically
+        val dragRoot = floatingView?.findViewById<DraggableLinearLayout>(R.id.floating_root)
+        dragRoot?.onDragStart = {
+            dragStartX = layoutParams?.x ?: 0
+            dragStartY = layoutParams?.y ?: 0
+        }
+        dragRoot?.onDragListener = { dx, dy ->
+            layoutParams?.let { lp ->
+                lp.x = dragStartX + dx
+                lp.y = dragStartY + dy
+                windowManager?.updateViewLayout(floatingView, lp)
             }
         }
 
@@ -178,6 +175,7 @@ class FloatingWindowService : Service() {
             toggleCollapse()
         }
 
+        updateFloatingIcon()
         addFloatingView()
     }
 
@@ -195,7 +193,6 @@ class FloatingWindowService : Service() {
         val stopBtn = floatingView?.findViewById<View>(R.id.floating_stop_btn)
 
         if (isCollapsed) {
-            // Collapse: hide all except the main button and change eye icon to expand
             hideBtn?.setImageResource(R.drawable.ic_expand)
             hideBtn?.visibility = View.VISIBLE
             durationView?.visibility = View.GONE
@@ -203,7 +200,6 @@ class FloatingWindowService : Service() {
             annotationBtn?.visibility = View.GONE
             stopBtn?.visibility = View.GONE
         } else {
-            // Expand: restore visibility based on current state
             hideBtn?.setImageResource(R.drawable.ic_hide)
             updateFloatingIcon()
         }
@@ -211,6 +207,8 @@ class FloatingWindowService : Service() {
 
     private fun addFloatingView() {
         if (floatingView == null || isAdded) return
+        // Ensure service is foreground so it survives when app goes to background
+        startForegroundIfNeeded()
         windowManager?.addView(floatingView, layoutParams)
         isAdded = true
     }
@@ -246,11 +244,6 @@ class FloatingWindowService : Service() {
         }
     }
 
-    private fun isDarkMode(): Boolean {
-        return (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
-    }
-
     private fun updateDuration(durationMs: Long) {
         val durationView = floatingView?.findViewById<android.widget.TextView>(R.id.floating_duration) ?: return
         val isRecording = currentState == RecordingState.RECORDING || currentState == RecordingState.PAUSED
@@ -270,8 +263,7 @@ class FloatingWindowService : Service() {
     }
 
     private fun updateCountdown(remaining: Int) {
-        // Countdown is now displayed as a fullscreen overlay by FloatingCountdownService.
-        // No need to show countdown in the floating window bar.
+        // Countdown displayed by FloatingCountdownService
     }
 
     private fun updateFloatingIcon() {
@@ -319,7 +311,6 @@ class FloatingWindowService : Service() {
             stopBtn?.visibility = View.VISIBLE
             hideBtn?.visibility = View.GONE
         } else if (currentState == RecordingState.IDLE && isPersistentMode) {
-            // Persistent mode: show only the record button (pause_btn acts as record)
             screenshotBtn?.visibility = View.GONE
             annotationBtn?.visibility = View.GONE
             stopBtn?.visibility = View.GONE
@@ -332,9 +323,56 @@ class FloatingWindowService : Service() {
         }
     }
 
+    // ── Foreground service support ──────────────────────────────────────
+
+    private fun startForegroundIfNeeded() {
+        if (isForeground) return
+        createNotificationChannel()
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(getString(R.string.floating_window_notification))
+            .setSmallIcon(R.drawable.ic_record)
+            .setOngoing(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+        isForeground = true
+    }
+
+    private fun stopForegroundIfNeeded() {
+        if (!isForeground) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        isForeground = false
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                getString(R.string.floating_window_channel),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Floating window service"
+                setShowBadge(false)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
     override fun onDestroy() {
         LogManager.log(LogManager.TAG_FLOAT, "floating window destroyed")
         removeFloatingView()
+        stopForegroundIfNeeded()
         floatingView = null
         super.onDestroy()
     }
