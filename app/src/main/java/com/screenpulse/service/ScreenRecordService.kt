@@ -145,6 +145,7 @@ class ScreenRecordService : Service() {
 
     private var audioCodec: MediaCodec? = null
     private var audioRecordBuffer: ByteArray? = null
+    private var audioPtsUs = 0L
 
     private var currentResolution = Resolution.R1080P
     private var currentFrameRate = FrameRate.FPS_30
@@ -218,7 +219,7 @@ class ScreenRecordService : Service() {
         // of onStartCommand(). When a countdown is enabled, startRecordingInternal()
         // (which calls startForeground) won't be called until after the countdown finishes,
         // potentially exceeding the timeout. Calling it here ensures the service stays alive.
-        startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        startForeground(NOTIFICATION_ID, createNotification(), recordingForegroundType())
 
         // Reset stale stopping flag from a previous recording that hasn't fully cleaned up.
         // Without this, startRecordingInternal() would bail out because isStopping == true.
@@ -407,7 +408,7 @@ class ScreenRecordService : Service() {
 
         // Android 14 (targetSdk 34) requires the mediaProjection foreground service
         // to be running BEFORE createVirtualDisplay() is called.
-        startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        startForeground(NOTIFICATION_ID, createNotification(), recordingForegroundType())
         // Keep the countdown keep-alive VirtualDisplay until the real capture
         // display is created. Releasing it first can stop MediaProjection.
 
@@ -448,6 +449,7 @@ class ScreenRecordService : Service() {
 
         try {
             NativeBridge.nativeInit()
+            audioPtsUs = 0L
 
             setupMediaMuxer()
             setupMediaCodec(codecWidth, codecHeight)
@@ -788,26 +790,59 @@ class ScreenRecordService : Service() {
         }
     }
 
+    private fun recordingForegroundType(): Int {
+        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        if (Build.VERSION.SDK_INT >= 34) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
+        return type
+    }
+
     private fun setupMicAudioRecord() {
         LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord: start")
         val sampleRate = 44100
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-        val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        val minBuffer = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        val bufferSize = (minBuffer * 4).coerceAtLeast(4096)
         LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord: bufferSize=$bufferSize")
 
-        micAudioRecord = AudioRecord.Builder()
-            .setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(AudioFormat.Builder()
-                .setSampleRate(sampleRate)
-                .setChannelMask(channelConfig)
-                .setEncoding(audioFormat)
-                .build())
-            .setBufferSizeInBytes(bufferSize)
+        val format = AudioFormat.Builder()
+            .setSampleRate(sampleRate)
+            .setChannelMask(channelConfig)
+            .setEncoding(audioFormat)
             .build()
-
-        micAudioRecord?.startRecording()
-        LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord: complete, recordingState=${micAudioRecord?.recordingState}")
+        val sources = intArrayOf(
+            android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            android.media.MediaRecorder.AudioSource.MIC
+        )
+        var recorder: AudioRecord? = null
+        for (source in sources) {
+            val candidate = try {
+                AudioRecord.Builder()
+                    .setAudioSource(source)
+                    .setAudioFormat(format)
+                    .setBufferSizeInBytes(bufferSize)
+                    .build()
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord source=$source failed", e)
+                null
+            }
+            if (candidate != null && candidate.state == AudioRecord.STATE_INITIALIZED) {
+                recorder = candidate
+                LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord using source=$source")
+                break
+            }
+            candidate?.release()
+        }
+        if (recorder == null) {
+            LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord FAILED: not initialized")
+            micAudioRecord = null
+            return
+        }
+        micAudioRecord = recorder
+        recorder.startRecording()
+        LogManager.log(LogManager.TAG_RECORD, "setupMicAudioRecord: complete, recordingState=${recorder.recordingState}")
     }
 
     private fun setupSystemAudioCapture() {
@@ -826,10 +861,11 @@ class ScreenRecordService : Service() {
         val sampleRate = 44100
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-        val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        val minBuffer = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        val bufferSize = (minBuffer * 4).coerceAtLeast(4096)
         LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: bufferSize=$bufferSize")
 
-        systemAudioRecord = AudioRecord.Builder()
+        val recorder = AudioRecord.Builder()
             .setAudioPlaybackCaptureConfig(config)
             .setAudioFormat(AudioFormat.Builder()
                 .setSampleRate(sampleRate)
@@ -838,9 +874,15 @@ class ScreenRecordService : Service() {
                 .build())
             .setBufferSizeInBytes(bufferSize)
             .build()
-
-        systemAudioRecord?.startRecording()
-        LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: complete, recordingState=${systemAudioRecord?.recordingState}")
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture FAILED: not initialized")
+            recorder.release()
+            systemAudioRecord = null
+            return
+        }
+        systemAudioRecord = recorder
+        recorder.startRecording()
+        LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: complete, recordingState=${recorder.recordingState}")
     }
 
     private fun setupAudioEncoder() {
@@ -880,31 +922,38 @@ class ScreenRecordService : Service() {
                             if (readSize > 0) {
                                 val sampleCount = readSize / 2
                                 NativeBridge.nativeApplyNoiseReduction(buffer, processedBuffer, sampleCount)
+                                applyPcmVolume(processedBuffer, readSize, micVolume)
                                 encodeAudioData(processedBuffer, readSize)
                             }
                         }
                         AudioMode.SYSTEM_ONLY -> {
                             val readSize = systemAudioRecord?.read(buffer, 0, buffer.size) ?: 0
                             if (readSize > 0) {
+                                applyPcmVolume(buffer, readSize, systemVolume)
                                 encodeAudioData(buffer, readSize)
                             }
                         }
                         AudioMode.MIXED -> {
                             val micRead = micAudioRecord?.read(buffer, 0, buffer.size) ?: 0
                             val sysRead = systemAudioRecord?.read(systemBuffer, 0, systemBuffer.size) ?: 0
-                            if (micRead > 0 && sysRead > 0) {
-                                val sampleCount = minOf(micRead, sysRead) / 2
+                            if (micRead > 0 || sysRead > 0) {
+                                if (micRead <= 0) buffer.fill(0)
+                                if (sysRead <= 0) systemBuffer.fill(0)
+                                val byteCount = maxOf(micRead, sysRead).coerceAtLeast(0)
+                                val sampleCount = byteCount / 2
+                                if (micRead > 0) {
+                                    NativeBridge.nativeApplyNoiseReduction(buffer, processedBuffer, micRead / 2)
+                                    System.arraycopy(processedBuffer, 0, buffer, 0, micRead)
+                                }
                                 NativeBridge.nativeMixAudio(
                                     systemBuffer, buffer, mixedBuffer,
                                     systemVolume / 100f, micVolume / 100f,
                                     sampleCount
                                 )
-                                NativeBridge.nativeApplyNoiseReduction(mixedBuffer, processedBuffer, sampleCount)
-                                encodeAudioData(processedBuffer, sampleCount * 2)
+                                encodeAudioData(mixedBuffer, sampleCount * 2)
                             }
                         }
                     }
-                    delay(10)
                 }
             } catch (_: CancellationException) {
                 // Coroutine cancelled (stop or destroy) – exit cleanly
@@ -912,15 +961,29 @@ class ScreenRecordService : Service() {
         }
     }
 
+    private fun applyPcmVolume(data: ByteArray, size: Int, volume: Int) {
+        if (volume == 100 || size < 2) return
+        val gain = volume / 100f
+        val sampleCount = size / 2
+        for (i in 0 until sampleCount) {
+            val index = i * 2
+            val sample = ((data[index].toInt() and 0xFF) or (data[index + 1].toInt() shl 8)).toShort()
+            val scaled = (sample * gain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            data[index] = (scaled and 0xFF).toByte()
+            data[index + 1] = ((scaled shr 8) and 0xFF).toByte()
+        }
+    }
+
     private fun encodeAudioData(data: ByteArray, size: Int) {
         val codec = audioCodec ?: return
-
         val inputIndex = codec.dequeueInputBuffer(10000)
         if (inputIndex >= 0) {
             val inputBuffer = codec.getInputBuffer(inputIndex) ?: return
             inputBuffer.clear()
             inputBuffer.put(data, 0, size)
-            codec.queueInputBuffer(inputIndex, 0, size, System.nanoTime() / 1000, 0)
+            val pts = audioPtsUs
+            audioPtsUs += size / 2 * 1_000_000L / 44100L
+            codec.queueInputBuffer(inputIndex, 0, size, pts, 0)
         }
 
         drainAudioEncoder()
