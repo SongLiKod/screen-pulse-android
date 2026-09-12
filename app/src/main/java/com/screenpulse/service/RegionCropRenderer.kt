@@ -397,7 +397,8 @@ class RegionCropRenderer {
             }
 
             // Set presentation time and swap
-            val timestampNs = surfaceTexture?.timestamp ?: 0L
+            val textureTs = surfaceTexture?.timestamp ?: 0L
+            val timestampNs = if (textureTs > 0L) textureTs else System.nanoTime()
             EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, timestampNs)
             EGL14.eglSwapBuffers(eglDisplay, eglSurface)
 

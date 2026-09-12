@@ -100,6 +100,7 @@ class ScreenRecordService : Service() {
         const val EXTRA_CUSTOM_RESOLUTION_HEIGHT = "custom_resolution_height"
         const val EXTRA_CUSTOM_COUNTDOWN_SECONDS = "custom_countdown_seconds"
         const val EXTRA_FLOATING_WINDOW_PERSISTENT = "floating_window_persistent"
+        const val EXTRA_CAPTURE_PROTECTED_CONTENT = "capture_protected_content"
         const val CHANNEL_ID = "screen_pulse_recording"
         const val NOTIFICATION_ID = 1001
     }
@@ -146,6 +147,10 @@ class ScreenRecordService : Service() {
     private var audioCodec: MediaCodec? = null
     private var audioRecordBuffer: ByteArray? = null
     private var audioPtsUs = 0L
+    @Volatile private var recordingPtsBaseNs = 0L
+    private var lastAudioMuxPtsUs = -1L
+    private var lastVideoMuxPtsUs = -1L
+    private val ptsLock = Any()
 
     private var currentResolution = Resolution.R1080P
     private var currentFrameRate = FrameRate.FPS_30
@@ -171,6 +176,7 @@ class ScreenRecordService : Service() {
     private var recordDensityDpi = 0
     private var customSaveTreeUri = ""
     private var floatingWindowPersistent = false
+    private var captureProtectedContent = false
 
     private var stateCallback: RecordingStateCallback? = null
 
@@ -264,6 +270,7 @@ class ScreenRecordService : Service() {
         customResolutionHeight = intent.getIntExtra(EXTRA_CUSTOM_RESOLUTION_HEIGHT, 1080)
         customSaveTreeUri = intent.getStringExtra(EXTRA_CUSTOM_SAVE_TREE_URI) ?: ""
         floatingWindowPersistent = intent.getBooleanExtra(EXTRA_FLOATING_WINDOW_PERSISTENT, false)
+        captureProtectedContent = intent.getBooleanExtra(EXTRA_CAPTURE_PROTECTED_CONTENT, false)
 
         val countdown = CountdownMode.fromValue(intent.getIntExtra(EXTRA_COUNTDOWN, 0))
         val countdownSeconds = when (countdown) {
@@ -280,10 +287,15 @@ class ScreenRecordService : Service() {
             windowManager.defaultDisplay.getRealMetrics(metrics)
             val useCustomRegion = currentRecordMode == RecordMode.CUSTOM_REGION && customWidth > 0 && customHeight > 0
             if (useCustomRegion) {
-                MediaProjectionHolder.park(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+                MediaProjectionHolder.park(
+                    metrics.widthPixels,
+                    metrics.heightPixels,
+                    metrics.densityDpi,
+                    virtualDisplayFlags()
+                )
             } else {
                 val (parkW, parkH) = computeFullScreenEncodeSize(metrics.widthPixels, metrics.heightPixels)
-                MediaProjectionHolder.park(parkW, parkH, metrics.densityDpi)
+                MediaProjectionHolder.park(parkW, parkH, metrics.densityDpi, virtualDisplayFlags())
             }
             startCountdownOverlay()
             startCountdown(countdownSeconds)
@@ -445,11 +457,11 @@ class ScreenRecordService : Service() {
                 if (currentBitrate > 0) currentBitrate else BitrateMode.calculateSmartBitrate(codecWidth, codecHeight, currentFrameRate)
             } audioMode=${currentAudioMode} recordMode=${currentRecordMode} " +
             "region=${customOffsetX},${customOffsetY} ${customWidth}x$customHeight " +
-            "out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
+            "enhanced=$captureProtectedContent out=${outputFile?.name} customDir=${customSaveTreeUri.isNotEmpty()}")
 
         try {
             NativeBridge.nativeInit()
-            audioPtsUs = 0L
+            resetPtsClock()
 
             setupMediaMuxer()
             setupMediaCodec(codecWidth, codecHeight)
@@ -537,6 +549,15 @@ class ScreenRecordService : Service() {
         }
         val safeW = screenWidth.coerceAtLeast(16)
         val safeH = screenHeight.coerceAtLeast(16)
+        if (captureProtectedContent) {
+            val width = alignForCodec(safeW)
+            val height = alignForCodec(safeH)
+            LogManager.log(
+                LogManager.TAG_RECORD,
+                "full-screen size: enhanced capture screen=${safeW}x$safeH encode=${width}x$height"
+            )
+            return width to height
+        }
         val targetShort = minOf(currentResolution.width, currentResolution.height).coerceAtLeast(16)
         val screenShort = minOf(safeW, safeH)
         val scale = minOf(1f, targetShort.toFloat() / screenShort.toFloat())
@@ -739,7 +760,14 @@ class ScreenRecordService : Service() {
             throw RuntimeException("createCaptureDisplay FAILED: surface is null")
         }
         val display = try {
-            MediaProjectionHolder.adoptOrCreateDisplay(name, width, height, densityDpi, surface)
+            MediaProjectionHolder.adoptOrCreateDisplay(
+                name,
+                width,
+                height,
+                densityDpi,
+                surface,
+                virtualDisplayFlags()
+            )
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_RECORD, "setupVirtualDisplay: FAILED", e)
             throw e
@@ -754,31 +782,24 @@ class ScreenRecordService : Service() {
         if (virtualDisplay != null || encoderInputSurface == null) return
         try {
             if (regionCropRenderer != null) {
-                // CUSTOM_REGION mode: recreate VirtualDisplay at full screen with renderer's surface
                 val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
                 val metrics = DisplayMetrics()
                 @Suppress("DEPRECATION")
                 windowManager.defaultDisplay.getRealMetrics(metrics)
-                virtualDisplay = mediaProjection?.createVirtualDisplay(
+                virtualDisplay = createVirtualDisplayWithFallback(
                     "ScreenPulse",
                     metrics.widthPixels,
                     metrics.heightPixels,
                     metrics.densityDpi,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    regionCropRenderer?.getInputSurface(),
-                    null,
-                    null
+                    regionCropRenderer?.getInputSurface()
                 )
             } else {
-                virtualDisplay = mediaProjection?.createVirtualDisplay(
+                virtualDisplay = createVirtualDisplayWithFallback(
                     "ScreenPulse",
                     recordWidth,
                     recordHeight,
                     recordDensityDpi,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    encoderInputSurface,
-                    null,
-                    null
+                    encoderInputSurface
                 )
             }
             if (virtualDisplay == null) {
@@ -788,6 +809,44 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "recreateVirtualDisplay: FAILED", e)
             virtualDisplay = null
         }
+    }
+
+    private fun createVirtualDisplayWithFallback(
+        name: String,
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+        surface: Surface?
+    ): VirtualDisplay? {
+        val projection = mediaProjection ?: return null
+        if (surface == null) return null
+        val flagSets = linkedSetOf(virtualDisplayFlags(), DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR)
+        for (flags in flagSets) {
+            try {
+                val display = projection.createVirtualDisplay(
+                    name,
+                    width,
+                    height,
+                    densityDpi,
+                    flags,
+                    surface,
+                    null,
+                    null
+                )
+                if (display != null) return display
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "createVirtualDisplay flags=$flags failed", e)
+            }
+        }
+        return null
+    }
+
+    private fun virtualDisplayFlags(): Int {
+        var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+        if (captureProtectedContent) {
+            flags = flags or DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
+        }
+        return flags
     }
 
     private fun recordingForegroundType(): Int {
@@ -852,37 +911,77 @@ class ScreenRecordService : Service() {
             return
         }
 
-        val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection!!)
-            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-            .addMatchingUsage(AudioAttributes.USAGE_GAME)
-            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-            .build()
-
         val sampleRate = 44100
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val minBuffer = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
         val bufferSize = (minBuffer * 4).coerceAtLeast(4096)
-        LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: bufferSize=$bufferSize")
+        LogManager.log(
+            LogManager.TAG_RECORD,
+            "setupSystemAudioCapture: bufferSize=$bufferSize enhanced=$captureProtectedContent"
+        )
 
-        val recorder = AudioRecord.Builder()
-            .setAudioPlaybackCaptureConfig(config)
-            .setAudioFormat(AudioFormat.Builder()
-                .setSampleRate(sampleRate)
-                .setChannelMask(channelConfig)
-                .setEncoding(audioFormat)
-                .build())
-            .setBufferSizeInBytes(bufferSize)
-            .build()
-        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+        val configs = buildList {
+            if (captureProtectedContent) add(enhancedPlaybackCaptureConfig())
+            add(defaultPlaybackCaptureConfig())
+        }
+        var recorder: AudioRecord? = null
+        for ((index, config) in configs.withIndex()) {
+            val candidate = try {
+                AudioRecord.Builder()
+                    .setAudioPlaybackCaptureConfig(config)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(channelConfig)
+                            .setEncoding(audioFormat)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(bufferSize)
+                    .build()
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture config[$index] failed", e)
+                null
+            }
+            if (candidate != null && candidate.state == AudioRecord.STATE_INITIALIZED) {
+                recorder = candidate
+                LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture using config[$index]")
+                break
+            }
+            candidate?.release()
+        }
+        if (recorder == null) {
             LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture FAILED: not initialized")
-            recorder.release()
             systemAudioRecord = null
             return
         }
         systemAudioRecord = recorder
         recorder.startRecording()
         LogManager.log(LogManager.TAG_RECORD, "setupSystemAudioCapture: complete, recordingState=${recorder.recordingState}")
+    }
+
+    private fun defaultPlaybackCaptureConfig(): AudioPlaybackCaptureConfiguration {
+        return AudioPlaybackCaptureConfiguration.Builder(mediaProjection!!)
+            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+            .build()
+    }
+
+    private fun enhancedPlaybackCaptureConfig(): AudioPlaybackCaptureConfiguration {
+        return AudioPlaybackCaptureConfiguration.Builder(mediaProjection!!)
+            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+            .addMatchingUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .addMatchingUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING)
+            .addMatchingUsage(AudioAttributes.USAGE_ALARM)
+            .addMatchingUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .addMatchingUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+            .addMatchingUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .addMatchingUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+            .addMatchingUsage(AudioAttributes.USAGE_ASSISTANT)
+            .build()
     }
 
     private fun setupAudioEncoder() {
@@ -961,6 +1060,44 @@ class ScreenRecordService : Service() {
         }
     }
 
+    private fun resetPtsClock() {
+        recordingPtsBaseNs = System.nanoTime()
+        audioPtsUs = 0L
+        lastAudioMuxPtsUs = -1L
+        lastVideoMuxPtsUs = -1L
+    }
+
+    private fun capturePtsUs(): Long {
+        val base = recordingPtsBaseNs
+        if (base == 0L) return 0L
+        return ((System.nanoTime() - base) / 1000L).coerceAtLeast(0L)
+    }
+
+    private fun toRelativePts(rawPtsUs: Long): Long {
+        if (rawPtsUs <= 0L) return 0L
+        val baseUs = recordingPtsBaseNs / 1000L
+        val elapsed = capturePtsUs()
+        val fromBase = rawPtsUs - baseUs
+        val absDelta = kotlin.math.abs(fromBase - elapsed)
+        val relDelta = kotlin.math.abs(rawPtsUs - elapsed)
+        return if (absDelta <= relDelta) fromBase.coerceAtLeast(0L) else rawPtsUs
+    }
+
+    private fun applyMuxPts(info: MediaCodec.BufferInfo, trackIndex: Int) {
+        if (info.size <= 0) return
+        synchronized(ptsLock) {
+            val relative = toRelativePts(info.presentationTimeUs)
+            val last = if (trackIndex == audioTrackIndex) lastAudioMuxPtsUs else lastVideoMuxPtsUs
+            val pts = if (relative <= last) last + 1L else relative
+            info.presentationTimeUs = pts
+            if (trackIndex == audioTrackIndex) {
+                lastAudioMuxPtsUs = pts
+            } else {
+                lastVideoMuxPtsUs = pts
+            }
+        }
+    }
+
     private fun applyPcmVolume(data: ByteArray, size: Int, volume: Int) {
         if (volume == 100 || size < 2) return
         val gain = volume / 100f
@@ -981,8 +1118,10 @@ class ScreenRecordService : Service() {
             val inputBuffer = codec.getInputBuffer(inputIndex) ?: return
             inputBuffer.clear()
             inputBuffer.put(data, 0, size)
-            val pts = audioPtsUs
-            audioPtsUs += size / 2 * 1_000_000L / 44100L
+            val durationUs = (size / 2 * 1_000_000L / 44100L).coerceAtLeast(1L)
+            val wallPts = capturePtsUs()
+            val pts = if (wallPts > audioPtsUs) wallPts else audioPtsUs + durationUs
+            audioPtsUs = pts
             codec.queueInputBuffer(inputIndex, 0, size, pts, 0)
         }
 
@@ -1020,9 +1159,9 @@ class ScreenRecordService : Service() {
                         if (muxerStarted && audioTrackIndex != -1 && audioTrackIndex != -2) {
                             outputBuffer.position(audioBufferInfo.offset)
                             outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
+                            applyMuxPts(audioBufferInfo, audioTrackIndex)
                             muxer.writeSampleData(audioTrackIndex, outputBuffer, audioBufferInfo)
                         } else if (audioTrackIndex != -1 && audioTrackIndex != -2) {
-                            // Muxer hasn't started yet – buffer the sample so it isn't lost.
                             val copy = ByteBuffer.allocateDirect(audioBufferInfo.size)
                             outputBuffer.position(audioBufferInfo.offset)
                             outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
@@ -1089,10 +1228,9 @@ class ScreenRecordService : Service() {
                         if (muxerStarted && videoTrackIndex != -1) {
                             outputBuffer.position(videoBufferInfo.offset)
                             outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
+                            applyMuxPts(videoBufferInfo, videoTrackIndex)
                             muxer.writeSampleData(videoTrackIndex, outputBuffer, videoBufferInfo)
                         } else if (videoTrackIndex != -1) {
-                            // Muxer hasn't started yet – buffer the sample so it isn't lost.
-                            // Once the muxer starts, all buffered samples will be written.
                             val copy = ByteBuffer.allocateDirect(videoBufferInfo.size)
                             outputBuffer.position(videoBufferInfo.offset)
                             outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
@@ -1136,6 +1274,7 @@ class ScreenRecordService : Service() {
                 if (muxerStarted && videoTrackIndex != -1) {
                     outputBuffer.position(videoBufferInfo.offset)
                     outputBuffer.limit(videoBufferInfo.offset + videoBufferInfo.size)
+                    applyMuxPts(videoBufferInfo, videoTrackIndex)
                     muxer.writeSampleData(videoTrackIndex, outputBuffer, videoBufferInfo)
                 } else if (videoTrackIndex != -1) {
                     val copy = ByteBuffer.allocateDirect(videoBufferInfo.size)
@@ -1175,6 +1314,7 @@ class ScreenRecordService : Service() {
                 if (muxerStarted && audioTrackIndex != -1 && audioTrackIndex != -2) {
                     outputBuffer.position(audioBufferInfo.offset)
                     outputBuffer.limit(audioBufferInfo.offset + audioBufferInfo.size)
+                    applyMuxPts(audioBufferInfo, audioTrackIndex)
                     muxer.writeSampleData(audioTrackIndex, outputBuffer, audioBufferInfo)
                 } else if (audioTrackIndex != -1 && audioTrackIndex != -2) {
                     val copy = ByteBuffer.allocateDirect(audioBufferInfo.size)
@@ -1222,6 +1362,7 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "Writing ${pendingSamples.size} buffered samples to muxer")
             for (sample in pendingSamples) {
                 try {
+                    applyMuxPts(sample.info, sample.trackIndex)
                     muxer.writeSampleData(sample.trackIndex, sample.data, sample.info)
                 } catch (e: Exception) {
                     LogManager.log(LogManager.TAG_RECORD, "Failed to write buffered sample", e)
@@ -1628,6 +1769,7 @@ class ScreenRecordService : Service() {
         runCatching { mediaMuxer?.release() }.onFailure { LogManager.log(LogManager.TAG_RECORD, "cleanup: mediaMuxer release failed", it) }
         mediaMuxer = null
         muxerStarted = false
+        resetPtsClock()
 
         // Clear pending samples
         synchronized(pendingSamples) {

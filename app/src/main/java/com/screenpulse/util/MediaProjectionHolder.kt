@@ -100,7 +100,8 @@ object MediaProjectionHolder {
         width: Int,
         height: Int,
         densityDpi: Int,
-        surface: Surface
+        surface: Surface,
+        flags: Int = DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
     ): VirtualDisplay? {
         val p = projection ?: return null
         replacingDisplays = true
@@ -115,20 +116,11 @@ object MediaProjectionHolder {
                 runCatching { reader?.close() }
                 LogManager.log(
                     LogManager.TAG_RECORD,
-                    "MediaProjectionHolder reused keep-alive display ${width}x$height"
+                    "MediaProjectionHolder reused keep-alive display ${width}x$height flags=$flags"
                 )
                 return existing
             }
-            return p.createVirtualDisplay(
-                name,
-                width,
-                height,
-                densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                surface,
-                null,
-                null
-            )
+            return createVirtualDisplayWithFallback(p, name, width, height, densityDpi, flags, surface)
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder adoptOrCreateDisplay failed", e)
             return null
@@ -136,7 +128,12 @@ object MediaProjectionHolder {
     }
 
     @Synchronized
-    fun park(width: Int = 16, height: Int = 16, densityDpi: Int = 160) {
+    fun park(
+        width: Int = 16,
+        height: Int = 16,
+        densityDpi: Int = 160,
+        flags: Int = DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+    ) {
         val p = projection ?: return
         replacingDisplays = true
         val w = width.coerceAtLeast(16)
@@ -145,7 +142,7 @@ object MediaProjectionHolder {
         val existing = dummyDisplay
         if (existing != null) {
             runCatching { existing.resize(w, h, dpi) }
-            LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder already parked, resize ${w}x$h")
+            LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder already parked, resize ${w}x$h flags=$flags")
             return
         }
         val sizes = listOf(w to h, 1280 to 720, 16 to 16)
@@ -154,17 +151,19 @@ object MediaProjectionHolder {
                 releaseDummyLocked()
                 val reader = ImageReader.newInstance(pw, ph, PixelFormat.RGBA_8888, 2)
                 dummyReader = reader
-                dummyDisplay = p.createVirtualDisplay(
+                dummyDisplay = createVirtualDisplayWithFallback(
+                    p,
                     "ScreenPulseKeepAlive",
                     pw,
                     ph,
                     dpi,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    reader.surface,
-                    null,
-                    null
+                    flags,
+                    reader.surface
                 )
-                LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder parked ${pw}x$ph dpi=$dpi")
+                if (dummyDisplay == null) {
+                    throw IllegalStateException("createVirtualDisplay returned null")
+                }
+                LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder parked ${pw}x$ph dpi=$dpi flags=$flags")
                 return
             } catch (e: Exception) {
                 LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder park failed ${pw}x$ph", e)
@@ -184,6 +183,44 @@ object MediaProjectionHolder {
         }
         runCatching { toStop?.stop() }
         LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder cleared")
+    }
+
+    private fun createVirtualDisplayWithFallback(
+        projection: MediaProjection,
+        name: String,
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+        flags: Int,
+        surface: Surface
+    ): VirtualDisplay? {
+        val flagSets = linkedSetOf(flags, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR)
+        for (attempt in flagSets) {
+            try {
+                val display = projection.createVirtualDisplay(
+                    name,
+                    width,
+                    height,
+                    densityDpi,
+                    attempt,
+                    surface,
+                    null,
+                    null
+                )
+                if (display != null) {
+                    if (attempt != flags) {
+                        LogManager.log(
+                            LogManager.TAG_RECORD,
+                            "MediaProjectionHolder fell back to AUTO_MIRROR flags=$attempt"
+                        )
+                    }
+                    return display
+                }
+            } catch (e: Exception) {
+                LogManager.log(LogManager.TAG_RECORD, "MediaProjectionHolder createVirtualDisplay flags=$attempt failed", e)
+            }
+        }
+        return null
     }
 
     private fun takeProjectionLocked(): MediaProjection? {

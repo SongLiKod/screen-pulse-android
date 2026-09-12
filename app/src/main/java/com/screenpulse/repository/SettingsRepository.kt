@@ -45,6 +45,7 @@ class SettingsRepository(private val context: Context) {
         val LANGUAGE = stringPreferencesKey("language")
         val CUSTOM_SAVE_TREE_URI = stringPreferencesKey("custom_save_tree_uri")
         val FLOATING_WINDOW_PERSISTENT = booleanPreferencesKey("floating_window_persistent")
+        val CAPTURE_PROTECTED_CONTENT = booleanPreferencesKey("capture_protected_content")
     }
 
     val customSaveTreeUri: Flow<String> = context.dataStore.data.map { prefs ->
@@ -53,6 +54,10 @@ class SettingsRepository(private val context: Context) {
 
     val floatingWindowPersistent: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[Keys.FLOATING_WINDOW_PERSISTENT] ?: false
+    }
+
+    val captureProtectedContent: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.CAPTURE_PROTECTED_CONTENT] ?: false
     }
 
     suspend fun setCustomSaveTreeUri(uri: String) {
@@ -263,6 +268,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setFloatingWindowPersistent(enabled: Boolean) {
         context.dataStore.edit { it[Keys.FLOATING_WINDOW_PERSISTENT] = enabled }
+    }
+
+    suspend fun setCaptureProtectedContent(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.CAPTURE_PROTECTED_CONTENT] = enabled }
     }
 }
 

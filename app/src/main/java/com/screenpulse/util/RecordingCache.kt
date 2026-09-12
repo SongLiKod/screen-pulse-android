@@ -46,7 +46,8 @@ object RecordingCache {
         val regionOffsetX: Int = 0,
         val regionOffsetY: Int = 0,
         val customSaveTreeUri: String = "",
-        val floatingWindowPersistent: Boolean = false
+        val floatingWindowPersistent: Boolean = false,
+        val captureProtectedContent: Boolean = false
     )
 
     private var _resultCode: Int = 0
@@ -148,6 +149,7 @@ object RecordingCache {
             val customRegion = repo.customRegion.first()
             val customSaveTreeUri = repo.customSaveTreeUri.first()
             val floatingWindowPersistent = repo.floatingWindowPersistent.first()
+            val captureProtectedContent = repo.captureProtectedContent.first()
             Config(
                 audioMode = audioMode.value,
                 recordMode = recordMode.value,
@@ -173,7 +175,8 @@ object RecordingCache {
                 regionOffsetX = if (recordMode == RecordMode.CUSTOM_REGION) customRegion.offsetX else 0,
                 regionOffsetY = if (recordMode == RecordMode.CUSTOM_REGION) customRegion.offsetY else 0,
                 customSaveTreeUri = customSaveTreeUri,
-                floatingWindowPersistent = floatingWindowPersistent
+                floatingWindowPersistent = floatingWindowPersistent,
+                captureProtectedContent = captureProtectedContent
             )
         }
         if (syncedFromUi) {
@@ -254,6 +257,7 @@ object RecordingCache {
             putExtra(ScreenRecordService.EXTRA_CUSTOM_OFFSET_Y, c.regionOffsetY)
             putExtra(ScreenRecordService.EXTRA_CUSTOM_SAVE_TREE_URI, c.customSaveTreeUri)
             putExtra(ScreenRecordService.EXTRA_FLOATING_WINDOW_PERSISTENT, c.floatingWindowPersistent)
+            putExtra(ScreenRecordService.EXTRA_CAPTURE_PROTECTED_CONTENT, c.captureProtectedContent)
         }
     }
 }

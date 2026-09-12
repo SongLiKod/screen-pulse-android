@@ -96,6 +96,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val floatingWindowPersistent: StateFlow<Boolean> = repository.floatingWindowPersistent
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val captureProtectedContent: StateFlow<Boolean> = repository.captureProtectedContent
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             RecordingCache.ensureConfigLoaded(getApplication())
@@ -194,6 +197,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setFloatingWindowPersistent(enabled: Boolean) {
         RecordingCache.patch { it.copy(floatingWindowPersistent = enabled) }
         viewModelScope.launch { repository.setFloatingWindowPersistent(enabled) }
+    }
+    fun setCaptureProtectedContent(enabled: Boolean) {
+        RecordingCache.patch { it.copy(captureProtectedContent = enabled) }
+        viewModelScope.launch { repository.setCaptureProtectedContent(enabled) }
     }
 
     fun setLanguage(language: Language) = viewModelScope.launch {

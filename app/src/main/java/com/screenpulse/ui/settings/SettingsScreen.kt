@@ -64,8 +64,10 @@ fun SettingsScreen(
     val language by settingsViewModel.language.collectAsState()
     val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
     val floatingWindowPersistent by settingsViewModel.floatingWindowPersistent.collectAsState()
+    val captureProtectedContent by settingsViewModel.captureProtectedContent.collectAsState()
 
     var showBatteryDialog by remember { mutableStateOf(false) }
+    var showCaptureProtectedDialog by remember { mutableStateOf(false) }
     var customWidthText by remember(customResolutionWidth) { mutableStateOf(customResolutionWidth.toString()) }
     var customHeightText by remember(customResolutionHeight) { mutableStateOf(customResolutionHeight.toString()) }
 
@@ -547,8 +549,68 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.capture_protected_content), fontWeight = FontWeight.Medium)
+                        Text(
+                            stringResource(R.string.capture_protected_content_desc),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = captureProtectedContent,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showCaptureProtectedDialog = true
+                            } else {
+                                settingsViewModel.setCaptureProtectedContent(false)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(32.dp))
         }
+    }
+
+    if (showCaptureProtectedDialog) {
+        AlertDialog(
+            onDismissRequest = { showCaptureProtectedDialog = false },
+            title = { Text(stringResource(R.string.capture_protected_content_warning_title)) },
+            text = { Text(stringResource(R.string.capture_protected_content_warning)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCaptureProtectedDialog = false
+                    settingsViewModel.setCaptureProtectedContent(true)
+                }) { Text(stringResource(R.string.capture_protected_content_enable)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCaptureProtectedDialog = false }) {
+                    Text(stringResource(R.string.battery_later))
+                }
+            }
+        )
     }
 
     if (showBatteryDialog) {
