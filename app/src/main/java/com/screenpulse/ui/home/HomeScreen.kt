@@ -29,10 +29,8 @@ import com.screenpulse.floatingwindow.FloatingWindowService
 import com.screenpulse.permission.PermissionManager
 import com.screenpulse.R
 import com.screenpulse.repository.AudioMode
-import com.screenpulse.repository.CustomRegion
 import com.screenpulse.repository.RecordMode
 import com.screenpulse.service.ScreenRecordService
-import com.screenpulse.ui.regionselect.RegionSelectActivity
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.viewmodel.RecordingViewModel
 import com.screenpulse.viewmodel.SettingsViewModel
@@ -141,35 +139,6 @@ fun HomeScreen(
         }
     }
 
-    val regionSelectLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        LogManager.log(LogManager.TAG_UI, "Region select result: code=${result.resultCode} data=${result.data != null}")
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val d = result.data!!
-            val region = CustomRegion(
-                width = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_WIDTH, 0),
-                height = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_HEIGHT, 0),
-                offsetX = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_X, 0),
-                offsetY = d.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)
-            )
-            settingsViewModel.setCustomRegion(region)
-            RecordingCache.applyRegion(region)
-            LogManager.log(LogManager.TAG_UI, "Region selected: ${region.offsetX},${region.offsetY} ${region.width}x${region.height} -> asking MediaProjection")
-            if (MediaProjectionHolder.isActive) {
-                OverlayRecordingStarter.startCapture(context)
-                if (pipEnabled) {
-                    startPipOverlay(context, pipSize)
-                }
-                startFloatingWindow(context, floatingWindowPersistent)
-            } else {
-                mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
-            }
-        } else {
-            LogManager.log(LogManager.TAG_UI, "Region selection cancelled by user")
-        }
-    }
-
     fun continueToRecordingStart() {
         LogManager.log(LogManager.TAG_UI, "continueToRecordingStart overlay=${PermissionManager.hasOverlayPermission(context)} mode=$recordMode")
         when {
@@ -178,8 +147,8 @@ fun HomeScreen(
                 showOverlayDialog = true
             }
             recordMode == RecordMode.CUSTOM_REGION -> {
-                LogManager.log(LogManager.TAG_UI, "Custom region mode: open region selector")
-                regionSelectLauncher.launch(Intent(context, RegionSelectActivity::class.java))
+                LogManager.log(LogManager.TAG_UI, "Custom region mode: open overlay selector")
+                OverlayRecordingStarter.start(context)
             }
             else -> {
                 LogManager.log(LogManager.TAG_UI, "Launching MediaProjection permission")
@@ -318,7 +287,7 @@ fun HomeScreen(
                     onClick = onNavigateToSettings
                 )
                 ActionButton(
-                    icon = Icons.Default.CameraAlt,
+                    icon = Icons.Default.Screenshot,
                     label = stringResource(R.string.screenshot),
                     onClick = {
                         if (recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED) {

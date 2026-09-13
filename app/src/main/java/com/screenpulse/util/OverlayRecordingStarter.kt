@@ -19,12 +19,28 @@ object OverlayRecordingStarter {
         RecordingCache.ensureConfigLoaded(context)
         if (RecordingCache.config.recordMode == RecordMode.CUSTOM_REGION.value) {
             LogManager.log(LogManager.TAG_FLOAT, "OverlayRecordingStarter: select region on current screen")
-            context.startService(Intent(context, FloatingRegionSelectService::class.java).apply {
-                action = FloatingRegionSelectService.ACTION_SHOW
-            })
+            showRegionSelector(context, FloatingRegionSelectService.MODE_RECORD)
             return
         }
         startCapture(context)
+    }
+
+    fun showRegionSelector(
+        context: Context,
+        mode: String = FloatingRegionSelectService.MODE_RECORD,
+        editRegionId: String? = null
+    ) {
+        context.startService(Intent(context, FloatingRegionSelectService::class.java).apply {
+            action = if (mode == FloatingRegionSelectService.MODE_ADD) {
+                FloatingRegionSelectService.ACTION_ADD
+            } else {
+                FloatingRegionSelectService.ACTION_SHOW
+            }
+            putExtra(FloatingRegionSelectService.EXTRA_MODE, mode)
+            if (!editRegionId.isNullOrBlank()) {
+                putExtra(FloatingRegionSelectService.EXTRA_EDIT_REGION_ID, editRegionId)
+            }
+        })
     }
 
     fun startCapture(context: Context) {

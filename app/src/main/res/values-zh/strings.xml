@@ -131,7 +131,21 @@
 
     <string name="full_screen_record">全屏录制</string>
     <string name="region_record">自定义区域</string>
-    <string name="btn_select_region">选择录制区域</string>
+    <string name="btn_select_region">增加录制区域</string>
+    <string name="btn_add_region">增加录制区域</string>
+    <string name="region_preset_fullscreen">全屏</string>
+    <string name="region_preset_16_9">16:9</string>
+    <string name="region_preset_9_16">9:16</string>
+    <string name="region_preset_1_1">1:1</string>
+    <string name="region_preset_4_3">4:3</string>
+    <string name="region_draw_new">画新区域</string>
+    <string name="region_size_info">%1$d x %2$d  (%3$d, %4$d)</string>
+    <string name="region_too_small">区域太小，请调整后再确定</string>
+    <string name="region_saved_name">区域 %1$d</string>
+    <string name="region_presets">预设区域</string>
+    <string name="saved_regions">已保存区域</string>
+    <string name="no_saved_regions">暂无已保存区域</string>
+    <string name="cd_edit">编辑</string>
 
     <string name="compress_fast">极速压缩</string>
     <string name="compress_balanced">均衡压缩</string>

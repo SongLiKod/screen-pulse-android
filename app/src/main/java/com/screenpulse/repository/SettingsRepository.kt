@@ -46,6 +46,7 @@ class SettingsRepository(private val context: Context) {
         val CUSTOM_SAVE_TREE_URI = stringPreferencesKey("custom_save_tree_uri")
         val FLOATING_WINDOW_PERSISTENT = booleanPreferencesKey("floating_window_persistent")
         val CAPTURE_PROTECTED_CONTENT = booleanPreferencesKey("capture_protected_content")
+        val SAVED_REGIONS = stringPreferencesKey("saved_regions")
     }
 
     val customSaveTreeUri: Flow<String> = context.dataStore.data.map { prefs ->
@@ -131,6 +132,10 @@ class SettingsRepository(private val context: Context) {
             offsetX = prefs[Keys.CUSTOM_OFFSET_X] ?: 0,
             offsetY = prefs[Keys.CUSTOM_OFFSET_Y] ?: 0,
         )
+    }
+
+    val savedRegions: Flow<List<SavedRegion>> = context.dataStore.data.map { prefs ->
+        SavedRegion.decodeList(prefs[Keys.SAVED_REGIONS] ?: "")
     }
 
     val shortcutKeyName: Flow<String> = context.dataStore.data.map { prefs ->
@@ -238,6 +243,33 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setSavedRegions(regions: List<SavedRegion>) {
+        context.dataStore.edit { it[Keys.SAVED_REGIONS] = SavedRegion.encodeList(regions) }
+    }
+
+    suspend fun addSavedRegion(region: SavedRegion) {
+        context.dataStore.edit { prefs ->
+            val current = SavedRegion.decodeList(prefs[Keys.SAVED_REGIONS] ?: "")
+            prefs[Keys.SAVED_REGIONS] = SavedRegion.encodeList(current + region)
+        }
+    }
+
+    suspend fun deleteSavedRegion(id: String) {
+        context.dataStore.edit { prefs ->
+            val current = SavedRegion.decodeList(prefs[Keys.SAVED_REGIONS] ?: "")
+            prefs[Keys.SAVED_REGIONS] = SavedRegion.encodeList(current.filter { it.id != id })
+        }
+    }
+
+    suspend fun updateSavedRegion(region: SavedRegion) {
+        context.dataStore.edit { prefs ->
+            val current = SavedRegion.decodeList(prefs[Keys.SAVED_REGIONS] ?: "")
+            prefs[Keys.SAVED_REGIONS] = SavedRegion.encodeList(
+                current.map { if (it.id == region.id) region else it }
+            )
+        }
+    }
+
     suspend fun setShortcutKeyName(name: String) {
         context.dataStore.edit { it[Keys.SHORTCUT_KEY_NAME] = name }
     }
@@ -280,4 +312,56 @@ data class CustomRegion(
     val height: Int,
     val offsetX: Int,
     val offsetY: Int,
-)
+) {
+    fun isValid(): Boolean = width >= 16 && height >= 16
+}
+
+data class SavedRegion(
+    val id: String,
+    val name: String,
+    val width: Int,
+    val height: Int,
+    val offsetX: Int,
+    val offsetY: Int
+) {
+    fun toCustomRegion(): CustomRegion = CustomRegion(width, height, offsetX, offsetY)
+
+    companion object {
+        fun encodeList(regions: List<SavedRegion>): String {
+            val arr = org.json.JSONArray()
+            regions.forEach { region ->
+                arr.put(org.json.JSONObject().apply {
+                    put("id", region.id)
+                    put("name", region.name)
+                    put("width", region.width)
+                    put("height", region.height)
+                    put("offsetX", region.offsetX)
+                    put("offsetY", region.offsetY)
+                })
+            }
+            return arr.toString()
+        }
+
+        fun decodeList(raw: String): List<SavedRegion> {
+            if (raw.isBlank()) return emptyList()
+            return runCatching {
+                val arr = org.json.JSONArray(raw)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        add(
+                            SavedRegion(
+                                id = obj.optString("id"),
+                                name = obj.optString("name"),
+                                width = obj.optInt("width"),
+                                height = obj.optInt("height"),
+                                offsetX = obj.optInt("offsetX"),
+                                offsetY = obj.optInt("offsetY")
+                            )
+                        )
+                    }
+                }.filter { it.id.isNotBlank() && it.width > 0 && it.height > 0 }
+            }.getOrDefault(emptyList())
+        }
+    }
+}

@@ -93,6 +93,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val customRegion: StateFlow<CustomRegion> = repository.customRegion
         .stateIn(viewModelScope, SharingStarted.Eagerly, CustomRegion(0, 0, 0, 0))
 
+    val savedRegions: StateFlow<List<SavedRegion>> = repository.savedRegions
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val floatingWindowPersistent: StateFlow<Boolean> = repository.floatingWindowPersistent
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -194,6 +197,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         RecordingCache.applyRegion(region)
         viewModelScope.launch { repository.setCustomRegion(region) }
     }
+    fun deleteSavedRegion(id: String) = viewModelScope.launch { repository.deleteSavedRegion(id) }
+    fun updateSavedRegion(region: SavedRegion) = viewModelScope.launch { repository.updateSavedRegion(region) }
     fun setFloatingWindowPersistent(enabled: Boolean) {
         RecordingCache.patch { it.copy(floatingWindowPersistent = enabled) }
         viewModelScope.launch { repository.setFloatingWindowPersistent(enabled) }
