@@ -285,4 +285,9 @@
     <string name="btn_open_folder">打开文件夹</string>
     <string name="btn_reset_default">恢复默认</string>
     <string name="no_folder_selected">未选择目录</string>
+
+    <string name="section_about">关于</string>
+    <string name="about_app_name">瞬录</string>
+    <string name="about_version">版本 %1$s</string>
+    <string name="about_disclaimer">本软件仅供个人爱好使用。未经开发者本人同意，不得用于二次开发或商业用途。</string>
 </resources>

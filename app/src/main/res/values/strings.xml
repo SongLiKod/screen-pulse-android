@@ -285,4 +285,9 @@
     <string name="btn_open_folder">Open Folder</string>
     <string name="btn_reset_default">Use Default</string>
     <string name="no_folder_selected">No folder selected</string>
+
+    <string name="section_about">About</string>
+    <string name="about_app_name">ScreenPulse</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_disclaimer">This software is for personal hobby use only. Secondary development or commercial use is not permitted without the developer\'s consent.</string>
 </resources>

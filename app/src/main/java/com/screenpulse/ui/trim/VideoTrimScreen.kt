@@ -138,29 +138,40 @@ fun VideoTrimScreen(
     }
 
     fun runExport(overwrite: Boolean) {
+        if (isProcessing) return
         isProcessing = true
+        videoViewRef?.let { view ->
+            runCatching { view.pause() }
+            runCatching { view.stopPlayback() }
+        }
+        isPlaying = false
         scope.launch {
             val output = if (overwrite) {
                 "${filePath}.edit.tmp.mp4"
             } else {
                 clipOutputPath(filePath)
             }
-            val ok = withContext(Dispatchers.IO) {
-                val exported = VideoEditEngine.export(
-                    context = context,
-                    inputPath = filePath,
-                    outputPath = output,
-                    ranges = ranges,
-                    mute = mute,
-                    crop = crop
-                )
-                if (exported && overwrite) {
-                    VideoEditEngine.overwriteOriginal(filePath, output)
-                } else {
-                    exported
+            val ok = try {
+                withContext(Dispatchers.IO) {
+                    val exported = VideoEditEngine.export(
+                        context = context,
+                        inputPath = filePath,
+                        outputPath = output,
+                        ranges = ranges,
+                        mute = mute,
+                        crop = crop
+                    )
+                    if (exported && overwrite) {
+                        VideoEditEngine.overwriteOriginal(filePath, output)
+                    } else {
+                        exported
+                    }
                 }
+            } catch (_: Exception) {
+                false
+            } finally {
+                isProcessing = false
             }
-            isProcessing = false
             val message = when {
                 !ok -> R.string.export_clip_failed
                 overwrite -> R.string.edit_overwrite_success
@@ -436,6 +447,23 @@ fun VideoTrimScreen(
                 Text(stringResource(R.string.edit_overwrite))
             }
         }
+    }
+
+    if (isProcessing) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.processing)) },
+            text = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                    Text(stringResource(R.string.processing))
+                }
+            },
+            confirmButton = {}
+        )
     }
 
     if (showOverwrite) {
