@@ -209,6 +209,12 @@
     <string name="trim_duration_label">时长：%1$s</string>
     <string name="action_trim">裁剪</string>
     <string name="processing">处理中...</string>
+    <string name="export_clip">导出片段</string>
+    <string name="export_clip_success">片段已保存，原片未改动</string>
+    <string name="export_clip_failed">导出片段失败</string>
+    <string name="compress_progress">压缩中 %1$d%%</string>
+    <string name="compress_failed">压缩失败</string>
+    <string name="compress_retry">重试</string>
 
     <string name="title_logs">日志</string>
     <string name="no_logs">暂无日志</string>

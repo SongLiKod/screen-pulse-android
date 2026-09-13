@@ -33,6 +33,8 @@ class FloatingWindowService : Service() {
         const val ACTION_HIDE = "com.screenpulse.floating.ACTION_HIDE"
         const val ACTION_SHOW = "com.screenpulse.floating.ACTION_SHOW"
         const val ACTION_SHOW_PERSISTENT = "com.screenpulse.floating.ACTION_SHOW_PERSISTENT"
+        const val ACTION_HIDE_FOR_CAPTURE = "com.screenpulse.floating.ACTION_HIDE_FOR_CAPTURE"
+        const val ACTION_RESTORE_AFTER_CAPTURE = "com.screenpulse.floating.ACTION_RESTORE_AFTER_CAPTURE"
         const val EXTRA_PERSISTENT = "persistent"
 
         private const val CHANNEL_ID = "screen_pulse_floating"
@@ -47,6 +49,7 @@ class FloatingWindowService : Service() {
     private var isPersistentMode = false
     private var isCollapsed = false
     private var isForeground = false
+    private var hideForCapture = false
 
     // Drag state: store the initial layout position when drag starts
     private var dragStartX = 0
@@ -75,6 +78,21 @@ class FloatingWindowService : Service() {
                 // re-shown quickly. The service will be stopped by ScreenRecordService
                 // when recording finishes, or by the system when the app is truly done.
             }
+            ACTION_HIDE_FOR_CAPTURE -> {
+                hideForCapture = true
+                LogManager.log(LogManager.TAG_FLOAT, "hide floating window for capture")
+                removeFloatingView()
+            }
+            ACTION_RESTORE_AFTER_CAPTURE -> {
+                hideForCapture = false
+                LogManager.log(LogManager.TAG_FLOAT, "restore floating window after capture")
+                if (floatingView == null) {
+                    createFloatingView()
+                } else {
+                    addFloatingView()
+                }
+                updateFloatingIcon()
+            }
             ACTION_UPDATE_DURATION -> {
                 val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
                 updateDuration(durationMs)
@@ -84,8 +102,11 @@ class FloatingWindowService : Service() {
                 updateCountdown(remaining)
             }
             ACTION_SHOW -> {
-                LogManager.log(LogManager.TAG_FLOAT, "show floating window")
-                if (floatingView == null) {
+                LogManager.log(LogManager.TAG_FLOAT, "show floating window hideForCapture=$hideForCapture")
+                if (hideForCapture) {
+                    // Keep the service alive but do not put the ball back on screen
+                    // while recording/countdown is capturing frames.
+                } else if (floatingView == null) {
                     createFloatingView()
                 } else {
                     addFloatingView()
@@ -93,8 +114,10 @@ class FloatingWindowService : Service() {
             }
             ACTION_SHOW_PERSISTENT -> {
                 isPersistentMode = intent.getBooleanExtra(EXTRA_PERSISTENT, false)
-                LogManager.log(LogManager.TAG_FLOAT, "show persistent floating window, persistent=$isPersistentMode")
-                if (floatingView == null) {
+                LogManager.log(LogManager.TAG_FLOAT, "show persistent floating window, persistent=$isPersistentMode hideForCapture=$hideForCapture")
+                if (hideForCapture) {
+                    // Recording capture in progress; restore after stop.
+                } else if (floatingView == null) {
                     createFloatingView()
                 } else {
                     addFloatingView()
@@ -104,11 +127,13 @@ class FloatingWindowService : Service() {
             else -> LogManager.log(LogManager.TAG_FLOAT, "onStartCommand action=${intent?.action}")
         }
 
-        if (floatingView == null) {
+        if (!hideForCapture && floatingView == null) {
             createFloatingView()
         }
 
-        updateFloatingIcon()
+        if (!hideForCapture) {
+            updateFloatingIcon()
+        }
 
         return START_STICKY
     }

@@ -209,6 +209,12 @@
     <string name="trim_duration_label">Duration: %1$s</string>
     <string name="action_trim">Trim</string>
     <string name="processing">Processing...</string>
+    <string name="export_clip">Export Clip</string>
+    <string name="export_clip_success">Clip saved, original kept</string>
+    <string name="export_clip_failed">Failed to export clip</string>
+    <string name="compress_progress">Compressing %1$d%%</string>
+    <string name="compress_failed">Compression failed</string>
+    <string name="compress_retry">Retry</string>
 
     <string name="title_logs">Logs</string>
     <string name="no_logs">No logs yet</string>

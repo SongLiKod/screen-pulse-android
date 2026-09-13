@@ -40,11 +40,8 @@ import android.util.DisplayMetrics
 import android.view.Surface
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
-import androidx.work.Data
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import com.screenpulse.R
-import com.screenpulse.compress.VideoCompressWorker
+import com.screenpulse.compress.CompressTracker
 import com.screenpulse.repository.AudioMode
 import com.screenpulse.repository.BitrateMode
 import com.screenpulse.repository.CompressionMode
@@ -278,6 +275,7 @@ class ScreenRecordService : Service() {
             else -> countdown.value
         }
         if (countdown != CountdownMode.NONE) {
+            hideFloatingForCapture()
             RecordingStateManager.updateState(RecordingState.COUNTDOWN)
             syncFloatingWindow(RecordingState.COUNTDOWN)
             stateCallback?.onStateChanged(RecordingState.COUNTDOWN)
@@ -300,7 +298,11 @@ class ScreenRecordService : Service() {
             startCountdownOverlay()
             startCountdown(countdownSeconds)
         } else {
-            startRecordingInternal()
+            serviceScope.launch {
+                hideFloatingForCapture()
+                delay(300L)
+                startRecordingInternal()
+            }
         }
     }
 
@@ -496,6 +498,10 @@ class ScreenRecordService : Service() {
             RecordingStateManager.updateState(RecordingState.RECORDING)
             syncFloatingWindow(RecordingState.RECORDING)
             stateCallback?.onStateChanged(RecordingState.RECORDING)
+            serviceScope.launch {
+                delay(400L)
+                restoreFloatingAfterCapture()
+            }
             Handler(Looper.getMainLooper()).postDelayed({ isStarting = false }, 2000)
             LogManager.log(LogManager.TAG_RECORD, "RECORDING started")
 
@@ -527,6 +533,7 @@ class ScreenRecordService : Service() {
             hideCountdownOverlay()
             cleanup()
             RecordingStateManager.updateState(RecordingState.IDLE)
+            restoreFloatingAfterCapture()
             syncFloatingWindow(RecordingState.IDLE)
             stateCallback?.onError(e.message ?: "Recording failed")
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -1519,7 +1526,7 @@ class ScreenRecordService : Service() {
                 // Check if floating window persistent mode is enabled
                 if (floatingWindowPersistent) {
                     LogManager.log(LogManager.TAG_RECORD, "Floating window persistent mode: keeping floating window alive")
-                    // Update floating window state to IDLE instead of stopping it
+                    restoreFloatingAfterCapture()
                     syncFloatingWindow(RecordingState.IDLE)
                 } else {
                     stopService(Intent(this@ScreenRecordService, com.screenpulse.floatingwindow.FloatingWindowService::class.java))
@@ -1533,17 +1540,27 @@ class ScreenRecordService : Service() {
 
     private fun triggerCompression(inputPath: String) {
         LogManager.log(LogManager.TAG_RECORD, "Enqueue compression: $inputPath mode=${currentCompressionMode}")
-        val compressData = Data.Builder()
-            .putString(VideoCompressWorker.KEY_INPUT_PATH, inputPath)
-            .putString(VideoCompressWorker.KEY_OUTPUT_PATH, inputPath.replace(".mp4", "_compressed.mp4"))
-            .putInt(VideoCompressWorker.KEY_COMPRESSION_MODE, currentCompressionMode.value)
-            .build()
+        CompressTracker.enqueue(this, inputPath, currentCompressionMode.value)
+    }
 
-        val compressRequest = OneTimeWorkRequestBuilder<VideoCompressWorker>()
-            .setInputData(compressData)
-            .build()
+    private fun hideFloatingForCapture() {
+        try {
+            startService(Intent(this, com.screenpulse.floatingwindow.FloatingWindowService::class.java).apply {
+                action = com.screenpulse.floatingwindow.FloatingWindowService.ACTION_HIDE_FOR_CAPTURE
+            })
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "hideFloatingForCapture failed", e)
+        }
+    }
 
-        WorkManager.getInstance(this).enqueue(compressRequest)
+    private fun restoreFloatingAfterCapture() {
+        try {
+            startService(Intent(this, com.screenpulse.floatingwindow.FloatingWindowService::class.java).apply {
+                action = com.screenpulse.floatingwindow.FloatingWindowService.ACTION_RESTORE_AFTER_CAPTURE
+            })
+        } catch (e: Exception) {
+            LogManager.log(LogManager.TAG_RECORD, "restoreFloatingAfterCapture failed", e)
+        }
     }
 
     private fun takeScreenshot() {
@@ -1552,7 +1569,13 @@ class ScreenRecordService : Service() {
             LogManager.log(LogManager.TAG_RECORD, "Screenshot skipped: mediaProjection is null")
             return
         }
-        captureAndSaveScreenshot(projection)
+        serviceScope.launch {
+            hideFloatingForCapture()
+            delay(250L)
+            captureAndSaveScreenshot(projection)
+            delay(800L)
+            restoreFloatingAfterCapture()
+        }
     }
 
     private fun handleScreenshotOnly(intent: Intent) {
@@ -1582,11 +1605,12 @@ class ScreenRecordService : Service() {
             return
         }
 
-        captureAndSaveScreenshot(projection)
-
-        // Clean up after screenshot is taken
-        serviceScope.launch(Dispatchers.Main) {
-            delay(1000L) // Wait for screenshot capture to complete
+        serviceScope.launch {
+            hideFloatingForCapture()
+            delay(250L)
+            captureAndSaveScreenshot(projection)
+            delay(800L)
+            restoreFloatingAfterCapture()
             projection.stop()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
