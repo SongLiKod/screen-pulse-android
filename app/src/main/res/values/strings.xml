@@ -46,6 +46,10 @@
     <string name="delete">Delete</string>
     <string name="rename">Rename</string>
     <string name="share">Share</string>
+    <string name="export">Export</string>
+    <string name="export_success">Exported to Movies/ScreenPulse</string>
+    <string name="export_failed">Export failed</string>
+    <string name="cd_export">Export</string>
     <string name="preview">Preview</string>
     <string name="no_videos">No recordings yet</string>
     <string name="permission_required">Permission Required</string>

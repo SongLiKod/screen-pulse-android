@@ -2,8 +2,6 @@ package com.screenpulse.ui.settings
 
 import android.content.Intent
 import android.os.Build
-import android.os.PowerManager
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -73,7 +71,6 @@ fun SettingsScreen(
     val captureProtectedContent by settingsViewModel.captureProtectedContent.collectAsState()
     val savedRegions by settingsViewModel.savedRegions.collectAsState()
 
-    var showBatteryDialog by remember { mutableStateOf(false) }
     var showCaptureProtectedDialog by remember { mutableStateOf(false) }
     var customWidthText by remember(customResolutionWidth) { mutableStateOf(customResolutionWidth.toString()) }
     var customHeightText by remember(customResolutionHeight) { mutableStateOf(customResolutionHeight.toString()) }
@@ -89,21 +86,10 @@ fun SettingsScreen(
         editRegionId: String? = null
     ) {
         if (!PermissionManager.hasOverlayPermission(context)) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                android.net.Uri.parse("package:${context.packageName}")
-            )
-            context.startActivity(intent)
+            context.startActivity(PermissionManager.overlaySettingsIntent(context))
             return
         }
         OverlayRecordingStarter.showRegionSelector(context, mode, editRegionId)
-    }
-
-    LaunchedEffect(Unit) {
-        val powerManager = context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
-        if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
-            showBatteryDialog = true
-        }
     }
 
     Scaffold(
@@ -711,24 +697,6 @@ fun SettingsScreen(
         )
     }
 
-    if (showBatteryDialog) {
-        AlertDialog(
-            onDismissRequest = { showBatteryDialog = false },
-            title = { Text(stringResource(R.string.battery_optimization)) },
-            text = { Text(stringResource(R.string.battery_optimization_desc)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showBatteryDialog = false
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        android.net.Uri.parse("package:${context.packageName}"))
-                    context.startActivity(intent)
-                }) { Text(stringResource(R.string.battery_disable)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showBatteryDialog = false }) { Text(stringResource(R.string.battery_later)) }
-            }
-        )
-    }
 }
 
 @Composable

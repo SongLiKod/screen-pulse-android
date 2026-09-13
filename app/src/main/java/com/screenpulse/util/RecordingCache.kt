@@ -23,7 +23,7 @@ import kotlinx.coroutines.runBlocking
 object RecordingCache {
 
     data class Config(
-        val audioMode: Int = 1,
+        val audioMode: Int = 0,
         val recordMode: Int = 0,
         val countdownMode: Int = 0,
         val customCountdownSeconds: Int = 10,

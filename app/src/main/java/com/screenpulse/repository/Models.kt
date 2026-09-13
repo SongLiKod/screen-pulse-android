@@ -16,7 +16,7 @@ enum class AudioMode(val value: Int) {
     MIXED(2);
 
     companion object {
-        fun fromValue(value: Int): AudioMode = entries.firstOrNull { it.value == value } ?: MIC_ONLY
+        fun fromValue(value: Int): AudioMode = entries.firstOrNull { it.value == value } ?: SYSTEM_ONLY
     }
 }
 

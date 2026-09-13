@@ -70,7 +70,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     val audioMode: Flow<AudioMode> = context.dataStore.data.map { prefs ->
-        AudioMode.fromValue(prefs[Keys.AUDIO_MODE] ?: AudioMode.MIC_ONLY.value)
+        AudioMode.fromValue(prefs[Keys.AUDIO_MODE] ?: AudioMode.SYSTEM_ONLY.value)
     }
 
     val resolution: Flow<Resolution> = context.dataStore.data.map { prefs ->
