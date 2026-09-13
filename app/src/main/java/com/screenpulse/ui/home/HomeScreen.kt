@@ -110,29 +110,18 @@ fun HomeScreen(
         }
     }
 
-    var isScreenshotMode by remember { mutableStateOf(false) }
-
     val mediaProjectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         LogManager.log(LogManager.TAG_UI, "MediaProjection result: code=${result.resultCode} data=${result.data != null}")
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            if (isScreenshotMode) {
-                isScreenshotMode = false
-                context.startService(Intent(context, ScreenRecordService::class.java).apply {
-                    action = ScreenRecordService.ACTION_SCREENSHOT_ONLY
-                    putExtra(ScreenRecordService.EXTRA_RESULT_CODE, result.resultCode)
-                    putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data!!)
-                })
-            } else {
-                RecordingCache.saveAuthorization(result.resultCode, result.data!!)
-                ContextCompat.startForegroundService(
-                    context,
-                    RecordingCache.createStartIntent(context, result.resultCode, result.data)
-                )
-                startFloatingWindow(context, floatingWindowPersistent)
-                OverlayRecordingStarter.startPipIfEnabled(context)
-            }
+            RecordingCache.saveAuthorization(result.resultCode, result.data!!)
+            ContextCompat.startForegroundService(
+                context,
+                RecordingCache.createStartIntent(context, result.resultCode, result.data)
+            )
+            startFloatingWindow(context, floatingWindowPersistent)
+            OverlayRecordingStarter.startPipIfEnabled(context)
         }
     }
 
@@ -287,22 +276,6 @@ fun HomeScreen(
                     icon = Icons.Default.Settings,
                     label = stringResource(R.string.settings),
                     onClick = onNavigateToSettings
-                )
-                ActionButton(
-                    icon = Icons.Default.Screenshot,
-                    label = stringResource(R.string.screenshot),
-                    onClick = {
-                        if (recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED) {
-                            context.startService(Intent(context, ScreenRecordService::class.java).apply {
-                                action = ScreenRecordService.ACTION_SCREENSHOT
-                            })
-                        } else {
-                            isScreenshotMode = true
-                            val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
-                            mediaProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
-                        }
-                    },
-                    enabled = true
                 )
             }
         }

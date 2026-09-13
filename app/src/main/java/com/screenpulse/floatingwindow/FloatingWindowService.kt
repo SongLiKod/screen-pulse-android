@@ -182,13 +182,6 @@ class FloatingWindowService : Service() {
             handleClick()
         }
 
-        floatingView?.findViewById<View>(R.id.floating_screenshot_btn)?.setOnClickListener {
-            val intent = Intent(this, ScreenRecordService::class.java).apply {
-                action = ScreenRecordService.ACTION_SCREENSHOT
-            }
-            startService(intent)
-        }
-
         var annotationVisible = false
         floatingView?.findViewById<View>(R.id.floating_annotation_btn)?.setOnClickListener {
             annotationVisible = !annotationVisible
@@ -218,13 +211,12 @@ class FloatingWindowService : Service() {
     /**
      * Toggle between collapsed and expanded states.
      * Collapsed: only show the main action button (pause/record)
-     * Expanded: show all buttons (duration, screenshot, annotation, stop, collapse)
+     * Expanded: show all buttons (duration, annotation, stop, collapse)
      */
     private fun toggleCollapse() {
         isCollapsed = !isCollapsed
         val hideBtn = floatingView?.findViewById<ImageView>(R.id.floating_hide_btn)
         val durationView = floatingView?.findViewById<View>(R.id.floating_duration)
-        val screenshotBtn = floatingView?.findViewById<View>(R.id.floating_screenshot_btn)
         val annotationBtn = floatingView?.findViewById<View>(R.id.floating_annotation_btn)
         val stopBtn = floatingView?.findViewById<View>(R.id.floating_stop_btn)
 
@@ -232,7 +224,6 @@ class FloatingWindowService : Service() {
             hideBtn?.setImageResource(R.drawable.ic_expand)
             hideBtn?.visibility = View.VISIBLE
             durationView?.visibility = View.GONE
-            screenshotBtn?.visibility = View.GONE
             annotationBtn?.visibility = View.GONE
             stopBtn?.visibility = View.GONE
         } else {
@@ -320,34 +311,28 @@ class FloatingWindowService : Service() {
             hideBtn?.setImageResource(R.drawable.ic_expand)
             hideBtn?.visibility = View.VISIBLE
             durationView?.visibility = View.GONE
-            floatingView?.findViewById<View>(R.id.floating_screenshot_btn)?.visibility = View.GONE
             floatingView?.findViewById<View>(R.id.floating_annotation_btn)?.visibility = View.GONE
             floatingView?.findViewById<View>(R.id.floating_stop_btn)?.visibility = View.GONE
             return
         }
 
-        val screenshotBtn = floatingView?.findViewById<View>(R.id.floating_screenshot_btn)
         val annotationBtn = floatingView?.findViewById<View>(R.id.floating_annotation_btn)
         val stopBtn = floatingView?.findViewById<View>(R.id.floating_stop_btn)
         val hideBtn = floatingView?.findViewById<View>(R.id.floating_hide_btn)
         if (isRecording) {
-            screenshotBtn?.visibility = View.VISIBLE
             annotationBtn?.visibility = View.VISIBLE
             stopBtn?.visibility = View.VISIBLE
             hideBtn?.visibility = View.VISIBLE
             hideBtn?.let { (it as? ImageView)?.setImageResource(R.drawable.ic_hide) }
         } else if (currentState == RecordingState.COUNTDOWN) {
-            screenshotBtn?.visibility = View.GONE
             annotationBtn?.visibility = View.GONE
             stopBtn?.visibility = View.VISIBLE
             hideBtn?.visibility = View.GONE
         } else if (currentState == RecordingState.IDLE && isPersistentMode) {
-            screenshotBtn?.visibility = View.GONE
             annotationBtn?.visibility = View.GONE
             stopBtn?.visibility = View.GONE
             hideBtn?.visibility = View.GONE
         } else {
-            screenshotBtn?.visibility = View.GONE
             annotationBtn?.visibility = View.GONE
             stopBtn?.visibility = View.GONE
             hideBtn?.visibility = View.GONE

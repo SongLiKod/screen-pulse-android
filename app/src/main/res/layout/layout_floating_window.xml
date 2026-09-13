@@ -32,17 +32,6 @@
         android:fontFamily="monospace" />
 
     <ImageView
-        android:id="@+id/floating_screenshot_btn"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:layout_marginStart="4dp"
-        android:src="@drawable/ic_screenshot"
-        android:background="@drawable/floating_small_btn_bg"
-        android:padding="6dp"
-        android:contentDescription="@string/screenshot"
-        android:visibility="gone" />
-
-    <ImageView
         android:id="@+id/floating_annotation_btn"
         android:layout_width="36dp"
         android:layout_height="36dp"
