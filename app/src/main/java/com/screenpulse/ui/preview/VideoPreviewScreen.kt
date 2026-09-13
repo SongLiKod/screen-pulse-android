@@ -414,74 +414,87 @@ fun VideoPreviewScreen(
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
-                Box(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .aspectRatio(videoAspect.coerceIn(9f / 21f, 21f / 9f))
-                        .background(Color.Black)
+                        .weight(1f)
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center
                 ) {
-                    if (playable) {
-            PlayerSurface(
-                modifier = Modifier.fillMaxSize(),
-                playable = playable,
-                videoUri = videoUri,
-                pendingSeekMs = pendingSeekMs,
-                resumePlaying = resumePlaying,
-                onViewReady = { videoViewRef = it },
-                onPlayerReady = { player, w, h, dur ->
-                    mediaPlayer = player
-                    if (w > 0 && h > 0) videoAspect = w.toFloat() / h.toFloat()
-                    if (dur > 0L) durationMs = dur
-                    val volume = if (muted) 0f else 1f
-                    player.setVolume(volume, volume)
-                },
-                onPlaying = { playing ->
-                    isPlaying = playing
-                    if (playing) isEnded = false
-                },
-                onCompletion = {
-                    isPlaying = false
-                    isEnded = true
-                    resumePlaying = false
-                    positionMs = durationMs
-                    showControls = true
-                },
-                onTap = { showControls = !showControls },
-                onDoubleTap = { togglePlay() },
-                onGestureStart = {
-                    seekOriginMs = positionMs
-                    volumeOrigin = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                    brightnessOrigin = currentBrightness()
-                },
-                onHorizontalSeek = { fraction ->
-                    val span = durationMs.coerceAtLeast(1L)
-                    val target = (seekOriginMs + (fraction * span).toLong()).coerceIn(0L, span)
-                    gestureHint = context.getString(R.string.player_seek_hint, formatClock(target))
-                    target
-                },
-                onHorizontalSeekEnd = { target ->
-                    seekTo(target)
-                    gestureHint = null
-                },
-                onVerticalLeft = { applyBrightnessFraction(it) },
-                onVerticalRight = { applyVolumeFraction(it) },
-                onGestureEnd = {
-                    scope.launch {
-                        delay(600L)
-                        gestureHint = null
-                    }
-                }
-            )
-                        overlay()
+                    val aspect = videoAspect.coerceIn(9f / 21f, 21f / 9f)
+                    val playerModifier = if (maxHeight <= 0.dp || maxWidth / maxHeight <= aspect) {
+                        Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(aspect)
                     } else {
-                        Text(
-                            text = stringResource(
-                                if (file != null && file.exists()) R.string.player_file_invalid
-                                else R.string.player_file_missing
-                            ),
-                            color = Color.White,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
+                        Modifier
+                            .fillMaxHeight()
+                            .aspectRatio(aspect)
+                    }
+                    Box(modifier = playerModifier) {
+                        if (playable) {
+                            PlayerSurface(
+                                modifier = Modifier.fillMaxSize(),
+                                playable = playable,
+                                videoUri = videoUri,
+                                pendingSeekMs = pendingSeekMs,
+                                resumePlaying = resumePlaying,
+                                onViewReady = { videoViewRef = it },
+                                onPlayerReady = { player, w, h, dur ->
+                                    mediaPlayer = player
+                                    if (w > 0 && h > 0) videoAspect = w.toFloat() / h.toFloat()
+                                    if (dur > 0L) durationMs = dur
+                                    val volume = if (muted) 0f else 1f
+                                    player.setVolume(volume, volume)
+                                },
+                                onPlaying = { playing ->
+                                    isPlaying = playing
+                                    if (playing) isEnded = false
+                                },
+                                onCompletion = {
+                                    isPlaying = false
+                                    isEnded = true
+                                    resumePlaying = false
+                                    positionMs = durationMs
+                                    showControls = true
+                                },
+                                onTap = { showControls = !showControls },
+                                onDoubleTap = { togglePlay() },
+                                onGestureStart = {
+                                    seekOriginMs = positionMs
+                                    volumeOrigin = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                                    brightnessOrigin = currentBrightness()
+                                },
+                                onHorizontalSeek = { fraction ->
+                                    val span = durationMs.coerceAtLeast(1L)
+                                    val target = (seekOriginMs + (fraction * span).toLong()).coerceIn(0L, span)
+                                    gestureHint = context.getString(R.string.player_seek_hint, formatClock(target))
+                                    target
+                                },
+                                onHorizontalSeekEnd = { target ->
+                                    seekTo(target)
+                                    gestureHint = null
+                                },
+                                onVerticalLeft = { applyBrightnessFraction(it) },
+                                onVerticalRight = { applyVolumeFraction(it) },
+                                onGestureEnd = {
+                                    scope.launch {
+                                        delay(600L)
+                                        gestureHint = null
+                                    }
+                                }
+                            )
+                            overlay()
+                        } else {
+                            Text(
+                                text = stringResource(
+                                    if (file != null && file.exists()) R.string.player_file_invalid
+                                    else R.string.player_file_missing
+                                ),
+                                color = Color.White,
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        }
                     }
                 }
 
