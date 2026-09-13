@@ -25,12 +25,10 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.ImageFormat
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.net.Uri
-import android.media.ImageReader
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
@@ -70,8 +68,6 @@ class ScreenRecordService : Service() {
         const val ACTION_STOP = "com.screenpulse.action.STOP"
         const val ACTION_PAUSE = "com.screenpulse.action.PAUSE"
         const val ACTION_RESUME = "com.screenpulse.action.RESUME"
-        const val ACTION_SCREENSHOT = "com.screenpulse.action.SCREENSHOT"
-        const val ACTION_SCREENSHOT_ONLY = "com.screenpulse.action.SCREENSHOT_ONLY"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_RESOLUTION = "resolution"
@@ -192,8 +188,6 @@ class ScreenRecordService : Service() {
             ACTION_STOP -> handleStop()
             ACTION_PAUSE -> handlePause()
             ACTION_RESUME -> handleResume()
-            ACTION_SCREENSHOT -> takeScreenshot()
-            ACTION_SCREENSHOT_ONLY -> handleScreenshotOnly(intent)
         }
         return START_STICKY
     }
@@ -1563,138 +1557,6 @@ class ScreenRecordService : Service() {
         }
     }
 
-    private fun takeScreenshot() {
-        LogManager.log(LogManager.TAG_RECORD, "Screenshot requested")
-        val projection = mediaProjection ?: run {
-            LogManager.log(LogManager.TAG_RECORD, "Screenshot skipped: mediaProjection is null")
-            return
-        }
-        serviceScope.launch {
-            hideFloatingForCapture()
-            delay(250L)
-            captureAndSaveScreenshot(projection)
-            delay(800L)
-            restoreFloatingAfterCapture()
-        }
-    }
-
-    private fun handleScreenshotOnly(intent: Intent) {
-        LogManager.log(LogManager.TAG_RECORD, "Screenshot-only requested")
-        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
-        val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra(EXTRA_RESULT_DATA)
-        }
-        if (resultData == null) {
-            LogManager.log(LogManager.TAG_RECORD, "Screenshot-only skipped: resultData is null")
-            stopSelf()
-            return
-        }
-
-        startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-
-        val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val projection = try {
-            projectionManager.getMediaProjection(resultCode, resultData)
-        } catch (e: Exception) {
-            LogManager.log(LogManager.TAG_RECORD, "Screenshot-only: getMediaProjection FAILED", e)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
-
-        serviceScope.launch {
-            hideFloatingForCapture()
-            delay(250L)
-            captureAndSaveScreenshot(projection)
-            delay(800L)
-            restoreFloatingAfterCapture()
-            projection.stop()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-        }
-    }
-
-    private fun captureAndSaveScreenshot(projection: MediaProjection) {
-        val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getRealMetrics(metrics)
-
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-
-        val imageReader = ImageReader.newInstance(
-            width, height, ImageFormat.JPEG, 2
-        )
-
-        val surface = imageReader.surface
-
-        val screenshotDisplay = projection.createVirtualDisplay(
-            "ScreenPulseScreenshot",
-            width, height, metrics.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            surface, null, null
-        )
-
-        imageReader.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage()
-            if (image != null) {
-                try {
-                    val planes = image.planes
-                    val buffer = planes[0].buffer
-                    val pixelStride = planes[0].pixelStride
-                    val rowStride = planes[0].rowStride
-                    val rowPadding = rowStride - pixelStride * width
-
-                    val bitmap = Bitmap.createBitmap(
-                        width + rowPadding / pixelStride,
-                        height,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    bitmap.copyPixelsFromBuffer(buffer)
-
-                    val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                    if (croppedBitmap != bitmap) bitmap.recycle()
-
-                    saveScreenshot(croppedBitmap)
-                } catch (e: Exception) {
-                    LogManager.log(LogManager.TAG_RECORD, "Screenshot capture failed", e)
-                    e.printStackTrace()
-                } finally {
-                    image.close()
-                }
-            } else {
-                LogManager.log(LogManager.TAG_RECORD, "Screenshot image is null")
-            }
-
-            screenshotDisplay.release()
-            reader.close()
-        }, Handler(Looper.getMainLooper()))
-    }
-
-    private fun saveScreenshot(bitmap: Bitmap) {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val dir = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "ScreenPulse")
-        if (!dir.exists()) dir.mkdirs()
-        val file = File(dir, "Screenshot_$timestamp.png")
-
-        try {
-            file.outputStream().use { out ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            }
-            LogManager.log(LogManager.TAG_RECORD, "Screenshot saved: ${file.absolutePath}")
-            stateCallback?.onScreenshotSaved(file.absolutePath)
-        } catch (e: Exception) {
-            LogManager.log(LogManager.TAG_RECORD, "Screenshot save failed", e)
-            e.printStackTrace()
-        } finally {
-            bitmap.recycle()
-        }
-    }
-
     private fun createWatermarkBitmap(): Bitmap? {
         return try {
             when (watermarkType) {
@@ -1967,6 +1829,5 @@ class ScreenRecordService : Service() {
         fun onCountdownTick(remaining: Int)
         fun onRecordingComplete(filePath: String?)
         fun onError(message: String)
-        fun onScreenshotSaved(filePath: String) {}
     }
 }
