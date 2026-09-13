@@ -14,11 +14,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -27,9 +30,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.screenpulse.R
 import com.screenpulse.repository.*
+import com.screenpulse.floatingwindow.FloatingRegionSelectService
+import com.screenpulse.permission.PermissionManager
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.OverlayRecordingStarter
+import com.screenpulse.util.RegionPresets
 import com.screenpulse.viewmodel.SettingsViewModel
-import com.screenpulse.ui.regionselect.RegionSelectActivity
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,6 +71,7 @@ fun SettingsScreen(
     val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
     val floatingWindowPersistent by settingsViewModel.floatingWindowPersistent.collectAsState()
     val captureProtectedContent by settingsViewModel.captureProtectedContent.collectAsState()
+    val savedRegions by settingsViewModel.savedRegions.collectAsState()
 
     var showBatteryDialog by remember { mutableStateOf(false) }
     var showCaptureProtectedDialog by remember { mutableStateOf(false) }
@@ -77,21 +84,19 @@ fun SettingsScreen(
         uri?.let { settingsViewModel.setWatermarkImageUri(it.toString()) }
     }
 
-    val regionSelectLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
-            val data = result.data!!
-            settingsViewModel.setCustomRegion(
-                CustomRegion(
-                    width = data.getIntExtra(RegionSelectActivity.EXTRA_REGION_WIDTH, 0),
-                    height = data.getIntExtra(RegionSelectActivity.EXTRA_REGION_HEIGHT, 0),
-                    offsetX = data.getIntExtra(RegionSelectActivity.EXTRA_REGION_X, 0),
-                    offsetY = data.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)
-                )
+    fun openRegionOverlay(
+        mode: String = FloatingRegionSelectService.MODE_ADD,
+        editRegionId: String? = null
+    ) {
+        if (!PermissionManager.hasOverlayPermission(context)) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:${context.packageName}")
             )
-            LogManager.log(LogManager.TAG_UI, "Region selected from settings: ${data.getIntExtra(RegionSelectActivity.EXTRA_REGION_X, 0)}x${data.getIntExtra(RegionSelectActivity.EXTRA_REGION_Y, 0)}")
+            context.startActivity(intent)
+            return
         }
+        OverlayRecordingStarter.showRegionSelector(context, mode, editRegionId)
     }
 
     LaunchedEffect(Unit) {
@@ -286,14 +291,107 @@ fun SettingsScreen(
             if (recordMode == RecordMode.CUSTOM_REGION) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
-                    onClick = { regionSelectLauncher.launch(Intent(context, RegionSelectActivity::class.java)) },
+                    onClick = { openRegionOverlay(FloatingRegionSelectService.MODE_ADD) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
-                    Text(stringResource(R.string.btn_select_region))
+                    Text(stringResource(R.string.btn_add_region))
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                val configuration = LocalConfiguration.current
+                val screenMetrics = remember(
+                    configuration.orientation,
+                    configuration.screenWidthDp,
+                    configuration.screenHeightDp
+                ) {
+                    android.util.DisplayMetrics().also { metrics ->
+                        @Suppress("DEPRECATION")
+                        (context.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager)
+                            .defaultDisplay.getRealMetrics(metrics)
+                    }
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(stringResource(R.string.region_presets), fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                        RegionPresets.namedPresets(screenMetrics.widthPixels, screenMetrics.heightPixels).forEach { preset ->
+                            Column(modifier = Modifier.padding(top = 8.dp)) {
+                                Text(stringResource(preset.nameRes), fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                                Text(
+                                    "${preset.region.width}x${preset.region.height}  (${preset.region.offsetX}, ${preset.region.offsetY})",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(stringResource(R.string.saved_regions), fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                        if (savedRegions.isEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                stringResource(R.string.no_saved_regions),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            savedRegions.forEach { region ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(region.name, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                                        Text(
+                                            "${region.width}x${region.height}  (${region.offsetX}, ${region.offsetY})",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            openRegionOverlay(
+                                                FloatingRegionSelectService.MODE_EDIT,
+                                                region.id
+                                            )
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = stringResource(R.string.cd_edit)
+                                        )
+                                    }
+                                    IconButton(onClick = { settingsViewModel.deleteSavedRegion(region.id) }) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = stringResource(R.string.delete),
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

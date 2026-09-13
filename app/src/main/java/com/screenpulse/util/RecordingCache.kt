@@ -2,6 +2,7 @@ package com.screenpulse.util
 
 import android.content.Context
 import android.content.Intent
+import android.os.Looper
 import com.screenpulse.ScreenPulseApp
 import com.screenpulse.repository.BitrateMode
 import com.screenpulse.repository.CustomRegion
@@ -98,9 +99,12 @@ object RecordingCache {
 
     @Synchronized
     fun ensureConfigLoaded(context: Context) {
-        if (!syncedFromUi) {
-            refreshConfigFromSettingsLocked(context)
+        if (syncedFromUi) return
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            LogManager.log(LogManager.TAG_FLOAT, "RecordingCache ensureConfigLoaded skipped on main thread")
+            return
         }
+        refreshConfigFromSettingsLocked(context)
     }
 
     /**
