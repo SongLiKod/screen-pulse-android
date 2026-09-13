@@ -57,8 +57,12 @@ fun VideoListScreen(
     var showDeleteDialog by remember { mutableStateOf<VideoItem?>(null) }
     var showRenameDialog by remember { mutableStateOf<VideoItem?>(null) }
 
-    LaunchedEffect(Unit) {
+    fun refreshVideos() {
         videos = loadVideos(context)
+    }
+
+    LaunchedEffect(Unit) {
+        refreshVideos()
     }
 
     Scaffold(
@@ -70,10 +74,16 @@ fun VideoListScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
+                actions = {
+                    IconButton(onClick = { refreshVideos() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_refresh))
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
                 )
             )
         }
@@ -182,76 +192,99 @@ private fun VideoCard(
     onTrim: () -> Unit
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Default.PlayCircle,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = video.name,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onClick)
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.PlayCircle,
+                    contentDescription = stringResource(R.string.preview),
+                    modifier = Modifier.size(40.dp),
+                    tint = MaterialTheme.colorScheme.primary
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row {
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = formatFileSize(video.size),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = video.name,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Text(" | ", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = video.duration,
+                        text = "${formatFileSize(video.size)}  ·  ${video.duration}  ·  ${formatDate(video.lastModified)}",
                         fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Text(
-                    text = formatDate(video.lastModified),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                VideoAction(
+                    icon = Icons.Default.ContentCut,
+                    label = stringResource(R.string.action_trim),
+                    onClick = onTrim
+                )
+                VideoAction(
+                    icon = Icons.Default.FileDownload,
+                    label = stringResource(R.string.export),
+                    onClick = onExport
+                )
+                VideoAction(
+                    icon = Icons.Default.Share,
+                    label = stringResource(R.string.share),
+                    onClick = onShare
+                )
+                VideoAction(
+                    icon = Icons.Default.Edit,
+                    label = stringResource(R.string.rename),
+                    onClick = onRename
+                )
+                VideoAction(
+                    icon = Icons.Default.Delete,
+                    label = stringResource(R.string.delete),
+                    onClick = onDelete,
+                    tint = MaterialTheme.colorScheme.error
                 )
             }
-            Row {
-                IconButton(onClick = onTrim) {
-                    Icon(Icons.Default.ContentCut, contentDescription = stringResource(R.string.cd_trim),
-                        tint = MaterialTheme.colorScheme.primary)
-                }
-                IconButton(onClick = onExport) {
-                    Icon(Icons.Default.FileDownload, contentDescription = stringResource(R.string.cd_export),
-                        tint = MaterialTheme.colorScheme.primary)
-                }
-                IconButton(onClick = onShare) {
-                    Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share),
-                        tint = MaterialTheme.colorScheme.primary)
-                }
-                IconButton(onClick = onRename) {
-                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_rename),
-                        tint = MaterialTheme.colorScheme.primary)
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete),
-                        tint = MaterialTheme.colorScheme.error)
-                }
-            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.VideoAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.weight(1f),
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 6.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(20.dp), tint = tint)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(label, fontSize = 10.sp, color = tint, maxLines = 1)
         }
     }
 }

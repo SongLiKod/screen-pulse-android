@@ -79,6 +79,7 @@
     <string name="cd_clear">清空</string>
     <string name="cd_stop">停止</string>
     <string name="cd_start_record">开始录制</string>
+    <string name="cd_refresh">刷新</string>
 
     <string name="tap_to_record">点击录制</string>
     <string name="starting">准备中...</string>
