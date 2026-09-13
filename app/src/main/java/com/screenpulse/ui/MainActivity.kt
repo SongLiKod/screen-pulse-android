@@ -118,7 +118,8 @@ class MainActivity : AppCompatActivity() {
                             val filePath = Uri.decode(backStackEntry.arguments?.getString("filePath") ?: "")
                             VideoPreviewScreen(
                                 filePath = filePath,
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                onTrim = { navController.navigate(Screen.VideoTrim.createRoute(filePath)) }
                             )
                         }
                         composable(

@@ -1,13 +1,9 @@
 package com.screenpulse.ui.videolist
 
-import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
-import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -32,13 +28,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
 import android.media.MediaMetadataRetriever
 import androidx.work.WorkManager
 import com.screenpulse.R
 import com.screenpulse.compress.CompressTracker
 import com.screenpulse.compress.CompressUiState
+import com.screenpulse.edit.VideoEditEngine
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.VideoFileActions
 import com.screenpulse.util.VideoThumbnailLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -384,8 +381,7 @@ private fun loadVideos(context: Context): List<VideoItem> {
 
     val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
     if (dir.exists()) {
-        dir.listFiles { file -> file.extension == "mp4" }?.forEach { file ->
-            // Skip empty or trivially small files — they are not valid recordings
+        dir.listFiles { file -> file.extension.equals("mp4", true) && !file.name.endsWith(".edit.tmp.mp4") }?.forEach { file ->
             if (file.length() < 1024) {
                 LogManager.log(LogManager.TAG_UI, "Skipping invalid/small video file: ${file.name} size=${file.length()}")
                 return@forEach
@@ -459,7 +455,10 @@ private fun loadCustomSaveTreeUri(context: Context): Uri? {
 }
 
 private fun deleteVideo(context: Context, video: VideoItem) {
-    video.file?.delete()
+    video.file?.let { file ->
+        VideoEditEngine.coverFileFor(file.absolutePath)?.delete()
+        file.delete()
+    }
     video.uri?.let {
         try {
             androidx.documentfile.provider.DocumentFile.fromSingleUri(context, it)?.delete()
@@ -473,7 +472,10 @@ private fun renameVideo(context: Context, video: VideoItem, newName: String) {
     val fileName = if (newName.endsWith(".mp4")) newName else "$newName.mp4"
     if (video.file != null) {
         val newFile = File(video.file.parent, fileName)
+        val cover = VideoEditEngine.coverFileFor(video.file.absolutePath)
         video.file.renameTo(newFile)
+        cover?.takeIf { it.exists() }?.renameTo(File(newFile.parent, newFile.name.substringBeforeLast('.') + ".cover.jpg"))
+        VideoThumbnailLoader.invalidate(video.displayPath)
     }
     video.uri?.let {
         try {
@@ -498,50 +500,11 @@ private fun formatDate(timestamp: Long): String {
 }
 
 private fun shareVideo(context: Context, video: VideoItem) {
-    val uri = video.uri ?: video.file?.let {
-        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", it)
-    } ?: return
-    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "video/mp4"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    context.startActivity(Intent.createChooser(shareIntent, "Share Video"))
+    VideoFileActions.share(context, video.displayPath)
 }
 
 private fun exportVideo(context: Context, video: VideoItem) {
-    val ok = runCatching {
-        val resolver = context.contentResolver
-        val fileName = video.name.ifBlank { "ScreenPulse_${System.currentTimeMillis()}.mp4" }
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ScreenPulse")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-        }
-        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        }
-        val destUri = resolver.insert(collection, values) ?: return@runCatching false
-        resolver.openOutputStream(destUri)?.use { output ->
-            when {
-                video.file != null -> video.file.inputStream().use { it.copyTo(output) }
-                video.uri != null -> resolver.openInputStream(video.uri)?.use { it.copyTo(output) }
-                    ?: return@runCatching false
-                else -> return@runCatching false
-            }
-        } ?: return@runCatching false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.clear()
-            values.put(MediaStore.Video.Media.IS_PENDING, 0)
-            resolver.update(destUri, values, null, null)
-        }
-        true
-    }.getOrDefault(false)
+    val ok = VideoFileActions.exportToMovies(context, video.displayPath, video.name)
     Toast.makeText(
         context,
         context.getString(if (ok) R.string.export_success else R.string.export_failed),
