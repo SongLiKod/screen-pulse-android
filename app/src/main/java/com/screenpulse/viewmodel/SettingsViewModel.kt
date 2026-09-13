@@ -22,7 +22,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         .stateIn(viewModelScope, SharingStarted.Eagerly, ThemeMode.FOLLOW_SYSTEM)
 
     val audioMode: StateFlow<AudioMode> = repository.audioMode
-        .stateIn(viewModelScope, SharingStarted.Eagerly, AudioMode.MIC_ONLY)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AudioMode.SYSTEM_ONLY)
 
     val resolution: StateFlow<Resolution> = repository.resolution
         .stateIn(viewModelScope, SharingStarted.Eagerly, Resolution.R1080P)

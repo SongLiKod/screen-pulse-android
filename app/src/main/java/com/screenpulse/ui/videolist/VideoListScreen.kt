@@ -1,9 +1,13 @@
 package com.screenpulse.ui.videolist
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -112,6 +116,7 @@ fun VideoListScreen(
                         onDelete = { showDeleteDialog = video },
                         onRename = { showRenameDialog = video },
                         onShare = { shareVideo(context, video) },
+                        onExport = { exportVideo(context, video) },
                         onTrim = { onVideoTrim(video.displayPath) }
                     )
                 }
@@ -173,6 +178,7 @@ private fun VideoCard(
     onDelete: () -> Unit,
     onRename: () -> Unit,
     onShare: () -> Unit,
+    onExport: () -> Unit,
     onTrim: () -> Unit
 ) {
     Card(
@@ -227,6 +233,10 @@ private fun VideoCard(
             Row {
                 IconButton(onClick = onTrim) {
                     Icon(Icons.Default.ContentCut, contentDescription = stringResource(R.string.cd_trim),
+                        tint = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = onExport) {
+                    Icon(Icons.Default.FileDownload, contentDescription = stringResource(R.string.cd_export),
                         tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = onShare) {
@@ -375,4 +385,44 @@ private fun shareVideo(context: Context, video: VideoItem) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(shareIntent, "Share Video"))
+}
+
+private fun exportVideo(context: Context, video: VideoItem) {
+    val ok = runCatching {
+        val resolver = context.contentResolver
+        val fileName = video.name.ifBlank { "ScreenPulse_${System.currentTimeMillis()}.mp4" }
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ScreenPulse")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+        }
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        }
+        val destUri = resolver.insert(collection, values) ?: return@runCatching false
+        resolver.openOutputStream(destUri)?.use { output ->
+            when {
+                video.file != null -> video.file.inputStream().use { it.copyTo(output) }
+                video.uri != null -> resolver.openInputStream(video.uri)?.use { it.copyTo(output) }
+                    ?: return@runCatching false
+                else -> return@runCatching false
+            }
+        } ?: return@runCatching false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            resolver.update(destUri, values, null, null)
+        }
+        true
+    }.getOrDefault(false)
+    Toast.makeText(
+        context,
+        context.getString(if (ok) R.string.export_success else R.string.export_failed),
+        Toast.LENGTH_SHORT
+    ).show()
 }

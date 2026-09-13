@@ -155,7 +155,7 @@ class ScreenRecordService : Service() {
     private var currentResolution = Resolution.R1080P
     private var currentFrameRate = FrameRate.FPS_30
     private var currentBitrate = 8000000
-    private var currentAudioMode = AudioMode.MIC_ONLY
+    private var currentAudioMode = AudioMode.SYSTEM_ONLY
     private var currentRecordMode = RecordMode.FULL_SCREEN
     private var currentCompressionMode = CompressionMode.BALANCED
     private var customWidth = 0
@@ -252,7 +252,7 @@ class ScreenRecordService : Service() {
         currentResolution = Resolution.fromValue(intent.getStringExtra(EXTRA_RESOLUTION) ?: "1080P")
         currentFrameRate = FrameRate.fromValue(intent.getIntExtra(EXTRA_FRAME_RATE, 30))
         currentBitrate = intent.getIntExtra(EXTRA_BITRATE, 8000000)
-        currentAudioMode = AudioMode.fromValue(intent.getIntExtra(EXTRA_AUDIO_MODE, 1))
+        currentAudioMode = AudioMode.fromValue(intent.getIntExtra(EXTRA_AUDIO_MODE, AudioMode.SYSTEM_ONLY.value))
         currentRecordMode = RecordMode.fromValue(intent.getIntExtra(EXTRA_RECORD_MODE, 0))
         currentCompressionMode = CompressionMode.fromValue(intent.getIntExtra(EXTRA_COMPRESSION_MODE, 1))
         customWidth = intent.getIntExtra(EXTRA_CUSTOM_WIDTH, 0)

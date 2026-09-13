@@ -3,7 +3,6 @@ package com.screenpulse.ui.home
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -111,8 +110,6 @@ fun HomeScreen(
         }
     }
 
-    var showPermissionDialog by remember { mutableStateOf(false) }
-    var showOverlayDialog by remember { mutableStateOf(false) }
     var isScreenshotMode by remember { mutableStateOf(false) }
 
     val mediaProjectionLauncher = rememberLauncherForActivityResult(
@@ -141,31 +138,41 @@ fun HomeScreen(
 
     fun continueToRecordingStart() {
         LogManager.log(LogManager.TAG_UI, "continueToRecordingStart overlay=${PermissionManager.hasOverlayPermission(context)} mode=$recordMode")
-        when {
-            !PermissionManager.hasOverlayPermission(context) -> {
-                LogManager.log(LogManager.TAG_UI, "Overlay permission missing, show dialog")
-                showOverlayDialog = true
-            }
-            recordMode == RecordMode.CUSTOM_REGION -> {
-                LogManager.log(LogManager.TAG_UI, "Custom region mode: open overlay selector")
-                OverlayRecordingStarter.start(context)
-            }
-            else -> {
-                LogManager.log(LogManager.TAG_UI, "Launching MediaProjection permission")
-                mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
-            }
+        if (recordMode == RecordMode.CUSTOM_REGION && !PermissionManager.hasOverlayPermission(context)) {
+            LogManager.log(LogManager.TAG_UI, "Custom region needs overlay permission")
+            context.startActivity(PermissionManager.overlaySettingsIntent(context))
+            return
+        }
+        if (recordMode == RecordMode.CUSTOM_REGION) {
+            LogManager.log(LogManager.TAG_UI, "Custom region mode: open overlay selector")
+            OverlayRecordingStarter.start(context)
+        } else {
+            LogManager.log(LogManager.TAG_UI, "Launching MediaProjection permission")
+            mediaProjectionLauncher.launch(PermissionManager.createMediaProjectionIntent(context))
         }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        LogManager.log(LogManager.TAG_UI, "Permission result: allGranted=$allGranted perms=$permissions")
-        if (allGranted) {
-            continueToRecordingStart()
+        LogManager.log(LogManager.TAG_UI, "Permission result: perms=$permissions")
+        PermissionManager.promptSpecialPermissionsIfNeeded(context)
+        continueToRecordingStart()
+    }
+
+    val startupPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        LogManager.log(LogManager.TAG_UI, "Startup permission result: perms=$permissions")
+        PermissionManager.promptSpecialPermissionsIfNeeded(context)
+    }
+
+    LaunchedEffect(Unit) {
+        val missing = PermissionManager.missingRuntimePermissions(context)
+        if (missing.isNotEmpty()) {
+            startupPermissionLauncher.launch(missing)
         } else {
-            showPermissionDialog = true
+            PermissionManager.promptSpecialPermissionsIfNeeded(context)
         }
     }
 
@@ -179,15 +186,10 @@ fun HomeScreen(
             startFloatingWindow(context, floatingWindowPersistent)
             return
         }
-        val permissions = PermissionManager.getRequiredPermissions()
-        val needsPermission = permissions.any { perm ->
-            androidx.core.content.ContextCompat.checkSelfPermission(
-                context, perm
-            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        }
-        LogManager.log(LogManager.TAG_UI, "Record button: needsPermission=$needsPermission overlay=${PermissionManager.hasOverlayPermission(context)}")
-        if (needsPermission) {
-            permissionLauncher.launch(permissions)
+        val missing = PermissionManager.missingRuntimePermissions(context)
+        LogManager.log(LogManager.TAG_UI, "Record button: missing=${missing.toList()} overlay=${PermissionManager.hasOverlayPermission(context)}")
+        if (missing.isNotEmpty()) {
+            permissionLauncher.launch(missing)
         } else {
             continueToRecordingStart()
         }
@@ -301,42 +303,6 @@ fun HomeScreen(
                         }
                     },
                     enabled = true
-                )
-            }
-
-            if (showPermissionDialog) {
-                AlertDialog(
-                    onDismissRequest = { showPermissionDialog = false },
-                    title = { Text(stringResource(R.string.permission_dialog_title)) },
-                    text = { Text(stringResource(R.string.permission_dialog_text)) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            showPermissionDialog = false
-                            permissionLauncher.launch(PermissionManager.getRequiredPermissions())
-                        }) { Text(stringResource(R.string.grant_permission)) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showPermissionDialog = false }) { Text(stringResource(R.string.cancel)) }
-                    }
-                )
-            }
-
-            if (showOverlayDialog) {
-                AlertDialog(
-                    onDismissRequest = { showOverlayDialog = false },
-                    title = { Text(stringResource(R.string.overlay_dialog_title)) },
-                    text = { Text(stringResource(R.string.overlay_dialog_text)) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            showOverlayDialog = false
-                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                android.net.Uri.parse("package:${context.packageName}"))
-                            context.startActivity(intent)
-                        }) { Text(stringResource(R.string.grant_permission)) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showOverlayDialog = false }) { Text(stringResource(R.string.cancel)) }
-                    }
                 )
             }
         }

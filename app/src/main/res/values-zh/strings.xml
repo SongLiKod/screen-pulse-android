@@ -46,6 +46,10 @@
     <string name="delete">删除</string>
     <string name="rename">重命名</string>
     <string name="share">分享</string>
+    <string name="export">导出</string>
+    <string name="export_success">已导出到 影片/ScreenPulse</string>
+    <string name="export_failed">导出失败</string>
+    <string name="cd_export">导出</string>
     <string name="preview">预览</string>
     <string name="no_videos">暂无录制</string>
     <string name="permission_required">需要权限</string>
