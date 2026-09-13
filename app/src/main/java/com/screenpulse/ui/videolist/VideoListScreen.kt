@@ -3,11 +3,14 @@ package com.screenpulse.ui.videolist
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,6 +23,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -28,8 +34,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import android.media.MediaMetadataRetriever
+import androidx.work.WorkManager
 import com.screenpulse.R
+import com.screenpulse.compress.CompressTracker
+import com.screenpulse.compress.CompressUiState
 import com.screenpulse.util.LogManager
+import com.screenpulse.util.VideoThumbnailLoader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -56,6 +68,9 @@ fun VideoListScreen(
     var videos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
     var showDeleteDialog by remember { mutableStateOf<VideoItem?>(null) }
     var showRenameDialog by remember { mutableStateOf<VideoItem?>(null) }
+    val compressInfos by WorkManager.getInstance(context)
+        .getWorkInfosByTagFlow(CompressTracker.TAG)
+        .collectAsState(initial = emptyList())
 
     fun refreshVideos() {
         videos = loadVideos(context)
@@ -119,15 +134,17 @@ fun VideoListScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                items(videos) { video ->
+                items(videos, key = { it.displayPath }) { video ->
                     VideoCard(
                         video = video,
+                        compressState = CompressTracker.stateFor(video.displayPath, compressInfos),
                         onClick = { onVideoClick(video.displayPath) },
                         onDelete = { showDeleteDialog = video },
                         onRename = { showRenameDialog = video },
                         onShare = { shareVideo(context, video) },
                         onExport = { exportVideo(context, video) },
-                        onTrim = { onVideoTrim(video.displayPath) }
+                        onTrim = { onVideoTrim(video.displayPath) },
+                        onRetryCompress = { CompressTracker.retry(context, video.displayPath) }
                     )
                 }
             }
@@ -184,13 +201,23 @@ fun VideoListScreen(
 @Composable
 private fun VideoCard(
     video: VideoItem,
+    compressState: CompressUiState?,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onRename: () -> Unit,
     onShare: () -> Unit,
     onExport: () -> Unit,
-    onTrim: () -> Unit
+    onTrim: () -> Unit,
+    onRetryCompress: () -> Unit
 ) {
+    val context = LocalContext.current
+    var thumbnail by remember(video.displayPath) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(video.displayPath) {
+        thumbnail = withContext(Dispatchers.IO) {
+            VideoThumbnailLoader.load(context, video.displayPath, video.uri)
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -206,12 +233,42 @@ private fun VideoCard(
                     .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Default.PlayCircle,
-                    contentDescription = stringResource(R.string.preview),
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                Box(
+                    modifier = Modifier
+                        .size(width = 96.dp, height = 54.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                ) {
+                    val frame = thumbnail
+                    if (frame != null) {
+                        Image(
+                            bitmap = frame.asImageBitmap(),
+                            contentDescription = stringResource(R.string.preview),
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.PlayCircle,
+                            contentDescription = stringResource(R.string.preview),
+                            modifier = Modifier
+                                .size(28.dp)
+                                .align(Alignment.Center),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Text(
+                        text = video.duration,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.65f))
+                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -223,12 +280,44 @@ private fun VideoCard(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "${formatFileSize(video.size)}  ·  ${video.duration}  ·  ${formatDate(video.lastModified)}",
+                        text = "${formatFileSize(video.size)}  ·  ${formatDate(video.lastModified)}",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    when {
+                        compressState?.running == true -> {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = stringResource(R.string.compress_progress, compressState.progress),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            LinearProgressIndicator(
+                                progress = compressState.progress / 100f,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                            )
+                        }
+                        compressState?.failed == true -> {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = compressState.error ?: stringResource(R.string.compress_failed),
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                TextButton(onClick = onRetryCompress, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                    Text(stringResource(R.string.compress_retry), fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))

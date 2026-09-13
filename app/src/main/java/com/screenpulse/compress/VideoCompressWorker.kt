@@ -26,6 +26,7 @@ class VideoCompressWorker(
         const val KEY_OUTPUT_PATH = "output_path"
         const val KEY_COMPRESSION_MODE = "compression_mode"
         const val KEY_PROGRESS = "progress"
+        const val KEY_ERROR = "error"
     }
 
     override suspend fun doWork(): Result {
@@ -34,9 +35,11 @@ class VideoCompressWorker(
         val modeValue = inputData.getInt(KEY_COMPRESSION_MODE, CompressionMode.BALANCED.value)
         val mode = CompressionMode.fromValue(modeValue)
         LogManager.log(LogManager.TAG_COMPRESS, "compress start: $inputPath -> $outputPath mode=$mode")
+        setProgress(Data.Builder().putInt(KEY_PROGRESS, 0).build())
 
         return try {
             compressVideo(inputPath, outputPath, mode)
+            setProgress(Data.Builder().putInt(KEY_PROGRESS, 100).build())
             LogManager.log(LogManager.TAG_COMPRESS, "compress done: ${outputPath}")
             Result.success(Data.Builder()
                 .putString(KEY_OUTPUT_PATH, outputPath)
@@ -44,7 +47,7 @@ class VideoCompressWorker(
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_COMPRESS, "compress FAILED", e)
             Result.failure(Data.Builder()
-                .putString("error", e.message)
+                .putString(KEY_ERROR, e.message ?: "compress failed")
                 .build())
         }
     }
@@ -72,6 +75,8 @@ class VideoCompressWorker(
                 }
             }
         }
+
+        setProgress(Data.Builder().putInt(KEY_PROGRESS, 15).build())
 
         val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
@@ -113,6 +118,7 @@ class VideoCompressWorker(
                 val muxerAudioTrack = muxer.addTrack(audioFormat)
             }
             muxer.start()
+            setProgress(Data.Builder().putInt(KEY_PROGRESS, 70).build())
 
             encoder.stop()
             encoder.release()

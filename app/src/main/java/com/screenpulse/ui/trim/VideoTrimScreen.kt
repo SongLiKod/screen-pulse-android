@@ -1,9 +1,9 @@
 package com.screenpulse.ui.trim
 
-import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -211,7 +212,49 @@ fun VideoTrimScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(if (isProcessing) stringResource(R.string.processing) else stringResource(R.string.video_trim))
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = {
+                    isProcessing = true
+                    scope.launch {
+                        val outputPath = clipOutputPath(filePath)
+                        val success = withContext(Dispatchers.IO) {
+                            trimVideo(filePath, outputPath, trimStart, trimEnd, duration)
+                        }
+                        isProcessing = false
+                        Toast.makeText(
+                            context,
+                            context.getString(
+                                if (success) R.string.export_clip_success else R.string.export_clip_failed
+                            ),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        if (success) {
+                            onTrimComplete(outputPath)
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isProcessing && trimEnd > trimStart,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.FileDownload, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(if (isProcessing) stringResource(R.string.processing) else stringResource(R.string.export_clip))
+            }
         }
+    }
+}
+
+private fun clipOutputPath(inputPath: String): String {
+    val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+        .format(java.util.Date())
+    return if (inputPath.contains(".")) {
+        inputPath.replace(Regex("\\.mp4$", RegexOption.IGNORE_CASE), "_clip_$stamp.mp4")
+    } else {
+        "${inputPath}_clip_$stamp.mp4"
     }
 }
 
