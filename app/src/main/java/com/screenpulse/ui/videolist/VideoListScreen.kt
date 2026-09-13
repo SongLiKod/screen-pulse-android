@@ -38,6 +38,7 @@ import androidx.work.WorkManager
 import com.screenpulse.R
 import com.screenpulse.compress.CompressTracker
 import com.screenpulse.compress.CompressUiState
+import com.screenpulse.edit.VideoEditEngine
 import com.screenpulse.util.LogManager
 import com.screenpulse.util.VideoThumbnailLoader
 import kotlinx.coroutines.Dispatchers
@@ -384,8 +385,7 @@ private fun loadVideos(context: Context): List<VideoItem> {
 
     val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
     if (dir.exists()) {
-        dir.listFiles { file -> file.extension == "mp4" }?.forEach { file ->
-            // Skip empty or trivially small files — they are not valid recordings
+        dir.listFiles { file -> file.extension.equals("mp4", true) && !file.name.endsWith(".edit.tmp.mp4") }?.forEach { file ->
             if (file.length() < 1024) {
                 LogManager.log(LogManager.TAG_UI, "Skipping invalid/small video file: ${file.name} size=${file.length()}")
                 return@forEach
@@ -459,7 +459,10 @@ private fun loadCustomSaveTreeUri(context: Context): Uri? {
 }
 
 private fun deleteVideo(context: Context, video: VideoItem) {
-    video.file?.delete()
+    video.file?.let { file ->
+        VideoEditEngine.coverFileFor(file.absolutePath)?.delete()
+        file.delete()
+    }
     video.uri?.let {
         try {
             androidx.documentfile.provider.DocumentFile.fromSingleUri(context, it)?.delete()
@@ -473,7 +476,10 @@ private fun renameVideo(context: Context, video: VideoItem, newName: String) {
     val fileName = if (newName.endsWith(".mp4")) newName else "$newName.mp4"
     if (video.file != null) {
         val newFile = File(video.file.parent, fileName)
+        val cover = VideoEditEngine.coverFileFor(video.file.absolutePath)
         video.file.renameTo(newFile)
+        cover?.takeIf { it.exists() }?.renameTo(File(newFile.parent, newFile.name.substringBeforeLast('.') + ".cover.jpg"))
+        VideoThumbnailLoader.invalidate(video.displayPath)
     }
     video.uri?.let {
         try {
