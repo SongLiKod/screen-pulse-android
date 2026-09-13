@@ -79,6 +79,7 @@
     <string name="cd_clear">Clear</string>
     <string name="cd_stop">Stop</string>
     <string name="cd_start_record">Start Recording</string>
+    <string name="cd_refresh">Refresh</string>
 
     <string name="tap_to_record">Tap to Record</string>
     <string name="starting">Starting...</string>
