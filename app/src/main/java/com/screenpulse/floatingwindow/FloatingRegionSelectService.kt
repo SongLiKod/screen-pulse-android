@@ -10,11 +10,14 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
@@ -30,8 +33,13 @@ import com.screenpulse.util.LogManager
 import com.screenpulse.util.OverlayRecordingStarter
 import com.screenpulse.util.RecordingCache
 import com.screenpulse.util.RegionPresets
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.max
@@ -59,7 +67,10 @@ class FloatingRegionSelectService : Service() {
     private var overlayView: RegionOverlayView? = null
     private var infoView: TextView? = null
     private var chipRow: LinearLayout? = null
+    private var topBar: LinearLayout? = null
+    private var buttonLayout: LinearLayout? = null
     private var layoutParams: WindowManager.LayoutParams? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var isAdded = false
     private val currentRect = RectF()
     private var mode = MODE_RECORD
@@ -114,12 +125,11 @@ class FloatingRegionSelectService : Service() {
         }
 
         layoutParams = WindowManager.LayoutParams(
-            metrics.widthPixels,
-            metrics.heightPixels,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -131,8 +141,9 @@ class FloatingRegionSelectService : Service() {
             }
         }
 
-        val root = FrameLayout(this)
-        overlayView = RegionOverlayView(this)
+        val themed = ContextThemeWrapper(this, R.style.Theme_ScreenPulse)
+        val root = FrameLayout(themed)
+        overlayView = RegionOverlayView(themed)
         root.addView(
             overlayView,
             FrameLayout.LayoutParams(
@@ -141,55 +152,71 @@ class FloatingRegionSelectService : Service() {
             )
         )
 
-        val chipScroll = HorizontalScrollView(this).apply {
+        val chipScroll = HorizontalScrollView(themed).apply {
             isHorizontalScrollBarEnabled = false
-            setPadding(16, 12, 16, 12)
+            isFillViewport = true
+            elevation = 16f
+            setPadding(12.dpToPx(), 10.dpToPx(), 12.dpToPx(), 10.dpToPx())
         }
-        chipRow = LinearLayout(this).apply {
+        chipRow = LinearLayout(themed).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         chipScroll.addView(chipRow)
-        root.addView(
-            chipScroll,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.TOP
-                topMargin = 36
-            }
-        )
-
-        infoView = TextView(this).apply {
+        infoView = TextView(themed).apply {
             setTextColor(Color.WHITE)
             textSize = 13f
             gravity = Gravity.CENTER
             setShadowLayer(6f, 0f, 0f, Color.BLACK)
             setPadding(24, 8, 24, 8)
         }
+        topBar = LinearLayout(themed).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            elevation = 16f
+            isClickable = true
+            isFocusable = true
+            addView(
+                chipScroll,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                infoView,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
         root.addView(
-            infoView,
+            topBar,
             FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                topMargin = 108
+                gravity = Gravity.TOP
+                topMargin = statusBarInset() + 8.dpToPx()
             }
         )
 
-        val confirmBtn = Button(this).apply {
+        val confirmBtn = Button(themed).apply {
             text = getString(R.string.confirm)
             setOnClickListener { confirmRegion() }
         }
-        val cancelBtn = Button(this).apply {
+        val cancelBtn = Button(themed).apply {
             text = getString(R.string.cancel)
             setOnClickListener { hideSelector() }
         }
-        val buttonLayout = LinearLayout(this).apply {
+        buttonLayout = LinearLayout(themed).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            elevation = 16f
+            isClickable = true
+            isFocusable = true
+            setPadding(12.dpToPx(), 8.dpToPx(), 12.dpToPx(), 8.dpToPx())
             addView(cancelBtn)
             addView(confirmBtn)
         }
@@ -200,38 +227,53 @@ class FloatingRegionSelectService : Service() {
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.BOTTOM
-                bottomMargin = 48
+                bottomMargin = navigationBarInset() + 12.dpToPx()
             }
         )
 
         rootView = root
-        windowManager?.addView(root, layoutParams)
-        isAdded = true
-        loadInitialRect()
-        refreshChips()
-        updateInfo()
-        overlayView?.invalidate()
-        LogManager.log(LogManager.TAG_FLOAT, "RegionSelect overlay shown mode=$mode")
+        topBar?.bringToFront()
+        buttonLayout?.bringToFront()
+        runCatching {
+            windowManager?.addView(root, layoutParams)
+            isAdded = true
+            loadInitialRect()
+            LogManager.log(LogManager.TAG_FLOAT, "RegionSelect overlay shown mode=$mode")
+        }.onFailure { e ->
+            LogManager.log(LogManager.TAG_FLOAT, "RegionSelect overlay addView failed", e)
+            isAdded = false
+            rootView = null
+            overlayView = null
+            infoView = null
+            chipRow = null
+            topBar = null
+            buttonLayout = null
+            stopSelf()
+        }
     }
 
     private fun loadInitialRect() {
-        RecordingCache.ensureConfigLoaded(this)
-        savedRegions = loadSavedRegions()
-        if (mode == MODE_EDIT) {
-            val editing = savedRegions.firstOrNull { it.id == editRegionId }
-            if (editing != null) {
-                applyRegion(editing.toCustomRegion())
-                return
+        scope.launch {
+            val regions = withContext(Dispatchers.IO) {
+                runCatching { RecordingCache.ensureConfigLoaded(this@FloatingRegionSelectService) }
+                loadSavedRegions()
             }
+            savedRegions = regions
+            refreshChips()
+            val region = if (mode == MODE_EDIT) {
+                regions.firstOrNull { it.id == editRegionId }?.toCustomRegion()
+                    ?: RegionPresets.fullScreen(screenWidth, screenHeight)
+            } else {
+                val cfg = RecordingCache.config
+                val last = CustomRegion(cfg.regionWidth, cfg.regionHeight, cfg.regionOffsetX, cfg.regionOffsetY)
+                if (last.isValid()) {
+                    RegionPresets.clampToScreen(last, screenWidth, screenHeight)
+                } else {
+                    RegionPresets.fullScreen(screenWidth, screenHeight)
+                }
+            }
+            applyRegion(region)
         }
-        val cfg = RecordingCache.config
-        val last = CustomRegion(cfg.regionWidth, cfg.regionHeight, cfg.regionOffsetX, cfg.regionOffsetY)
-        val region = if (last.isValid()) {
-            RegionPresets.clampToScreen(last, screenWidth, screenHeight)
-        } else {
-            RegionPresets.fullScreen(screenWidth, screenHeight)
-        }
-        applyRegion(region)
     }
 
     private fun applyRegion(region: CustomRegion) {
@@ -249,7 +291,6 @@ class FloatingRegionSelectService : Service() {
     private fun refreshChips() {
         val row = chipRow ?: return
         row.removeAllViews()
-        savedRegions = loadSavedRegions()
         RegionPresets.namedPresets(screenWidth, screenHeight).forEach { preset ->
             addChip(getString(preset.nameRes)) { applyRegion(preset.region) }
         }
@@ -261,28 +302,40 @@ class FloatingRegionSelectService : Service() {
             overlayView?.invalidate()
             updateInfo()
         }
+        topBar?.bringToFront()
+        buttonLayout?.bringToFront()
     }
 
     private fun addChip(label: String, onClick: () -> Unit) {
+        val padH = 18.dpToPx()
+        val padV = 12.dpToPx()
         val chip = TextView(this).apply {
             text = label
             setTextColor(Color.WHITE)
-            textSize = 13f
-            setPadding(28, 16, 28, 16)
-            setBackgroundColor(Color.parseColor("#CC2E7D32"))
+            textSize = 14f
+            setPadding(padH, padV, padH, padV)
+            minHeight = 40.dpToPx()
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 20.dpToPx().toFloat()
+                setColor(Color.parseColor("#E62E7D32"))
+            }
             setOnClickListener { onClick() }
         }
         chipRow?.addView(chip, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply {
-            marginEnd = 12
+            marginEnd = 10.dpToPx()
         })
     }
 
-    private fun loadSavedRegions(): List<SavedRegion> {
+    private suspend fun loadSavedRegions(): List<SavedRegion> {
         val repo = (application as? ScreenPulseApp)?.settingsRepository ?: return emptyList()
-        return runBlocking { repo.savedRegions.first() }
+        return runCatching { repo.savedRegions.first() }.getOrDefault(emptyList())
     }
 
     private fun currentCustomRegion(): CustomRegion {
@@ -335,23 +388,25 @@ class FloatingRegionSelectService : Service() {
 
     private fun persistLastRegion(region: CustomRegion) {
         val repo = (application as? ScreenPulseApp)?.settingsRepository ?: return
-        runBlocking { repo.setCustomRegion(region) }
+        scope.launch(Dispatchers.IO) { runCatching { repo.setCustomRegion(region) } }
     }
 
     private fun persistSavedRegion(region: CustomRegion) {
         val repo = (application as? ScreenPulseApp)?.settingsRepository ?: return
         val name = getString(R.string.region_saved_name, savedRegions.size + 1)
-        runBlocking {
-            repo.addSavedRegion(
-                SavedRegion(
-                    id = UUID.randomUUID().toString(),
-                    name = name,
-                    width = region.width,
-                    height = region.height,
-                    offsetX = region.offsetX,
-                    offsetY = region.offsetY
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                repo.addSavedRegion(
+                    SavedRegion(
+                        id = UUID.randomUUID().toString(),
+                        name = name,
+                        width = region.width,
+                        height = region.height,
+                        offsetX = region.offsetX,
+                        offsetY = region.offsetY
+                    )
                 )
-            )
+            }
         }
     }
 
@@ -362,15 +417,17 @@ class FloatingRegionSelectService : Service() {
             persistSavedRegion(region)
             return
         }
-        runBlocking {
-            repo.updateSavedRegion(
-                existing.copy(
-                    width = region.width,
-                    height = region.height,
-                    offsetX = region.offsetX,
-                    offsetY = region.offsetY
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                repo.updateSavedRegion(
+                    existing.copy(
+                        width = region.width,
+                        height = region.height,
+                        offsetX = region.offsetX,
+                        offsetY = region.offsetY
+                    )
                 )
-            )
+            }
         }
     }
 
@@ -383,12 +440,15 @@ class FloatingRegionSelectService : Service() {
         overlayView = null
         infoView = null
         chipRow = null
+        topBar = null
+        buttonLayout = null
         editRegionId = null
         currentRect.setEmpty()
         stopSelf()
     }
 
     override fun onDestroy() {
+        scope.cancel()
         if (rootView != null && isAdded) {
             runCatching { windowManager?.removeView(rootView) }
         }
@@ -398,9 +458,37 @@ class FloatingRegionSelectService : Service() {
         super.onDestroy()
     }
 
+    private fun statusBarInset(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager?.currentWindowMetrics?.windowInsets
+                ?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout())
+                ?.top
+                ?.coerceAtLeast(24.dpToPx())
+                ?: 48.dpToPx()
+        } else {
+            val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+            if (id > 0) resources.getDimensionPixelSize(id) else 48.dpToPx()
+        }
+    }
+
+    private fun navigationBarInset(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager?.currentWindowMetrics?.windowInsets
+                ?.getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars())
+                ?.bottom
+                ?.coerceAtLeast(12.dpToPx())
+                ?: 24.dpToPx()
+        } else {
+            val id = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+            if (id > 0) resources.getDimensionPixelSize(id) else 24.dpToPx()
+        }
+    }
+
+    private fun Int.dpToPx(): Int = (this * resources.displayMetrics.density).toInt()
+
     private inner class RegionOverlayView(context: Context) : View(context) {
-        private val handleHit = 24.dp()
-        private val handleSize = 10.dp()
+        private val handleHit = 44.dp()
+        private val handleSize = 22.dp()
         private val dimPaint = Paint().apply {
             color = Color.argb(90, 0, 0, 0)
             style = Paint.Style.FILL
@@ -445,6 +533,9 @@ class FloatingRegionSelectService : Service() {
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (event.action == MotionEvent.ACTION_DOWN && isInChrome(event.rawX, event.rawY)) {
+                return false
+            }
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = event.x
@@ -470,14 +561,18 @@ class FloatingRegionSelectService : Service() {
                         Handle.NONE -> {}
                         else -> resizeRect(activeHandle, event.x, event.y)
                     }
-                    clampRect()
+                    if (hasRect() || activeHandle != Handle.DRAW) {
+                        clampRect()
+                    }
                     invalidate()
                     updateInfo()
                     return true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     normalizeRect()
-                    clampRect()
+                    if (hasRect()) {
+                        clampRect()
+                    }
                     activeHandle = Handle.NONE
                     invalidate()
                     updateInfo()
@@ -485,6 +580,18 @@ class FloatingRegionSelectService : Service() {
                 }
             }
             return super.onTouchEvent(event)
+        }
+
+        private fun isInChrome(rawX: Float, rawY: Float): Boolean {
+            return isViewHit(topBar, rawX, rawY) || isViewHit(buttonLayout, rawX, rawY)
+        }
+
+        private fun isViewHit(view: View?, rawX: Float, rawY: Float): Boolean {
+            if (view == null || view.width <= 0 || view.height <= 0) return false
+            val loc = IntArray(2)
+            view.getLocationOnScreen(loc)
+            return rawX >= loc[0] && rawX <= loc[0] + view.width &&
+                rawY >= loc[1] && rawY <= loc[1] + view.height
         }
 
         private fun hasRect(): Boolean = currentRect.width() > 1f && currentRect.height() > 1f
@@ -498,15 +605,22 @@ class FloatingRegionSelectService : Service() {
         }
 
         private fun clampRect() {
+            if (width < RegionPresets.MIN_SIZE || height < RegionPresets.MIN_SIZE) return
+            if (!hasRect()) return
             normalizeRect()
+            val minSize = RegionPresets.MIN_SIZE.toFloat()
+            val maxLeft = (width - RegionPresets.MIN_SIZE).toFloat().coerceAtLeast(0f)
+            val maxTop = (height - RegionPresets.MIN_SIZE).toFloat().coerceAtLeast(0f)
             if (currentRect.left < 0) currentRect.offset(-currentRect.left, 0f)
             if (currentRect.top < 0) currentRect.offset(0f, -currentRect.top)
             if (currentRect.right > width) currentRect.offset(width - currentRect.right, 0f)
             if (currentRect.bottom > height) currentRect.offset(0f, height - currentRect.bottom)
-            currentRect.left = currentRect.left.coerceIn(0f, (width - RegionPresets.MIN_SIZE).toFloat())
-            currentRect.top = currentRect.top.coerceIn(0f, (height - RegionPresets.MIN_SIZE).toFloat())
-            currentRect.right = currentRect.right.coerceIn(currentRect.left + RegionPresets.MIN_SIZE, width.toFloat())
-            currentRect.bottom = currentRect.bottom.coerceIn(currentRect.top + RegionPresets.MIN_SIZE, height.toFloat())
+            currentRect.left = currentRect.left.coerceIn(0f, maxLeft)
+            currentRect.top = currentRect.top.coerceIn(0f, maxTop)
+            val minRight = (currentRect.left + minSize).coerceAtMost(width.toFloat())
+            val minBottom = (currentRect.top + minSize).coerceAtMost(height.toFloat())
+            currentRect.right = currentRect.right.coerceIn(minRight, width.toFloat())
+            currentRect.bottom = currentRect.bottom.coerceIn(minBottom, height.toFloat())
         }
 
         private fun moveRect(dx: Float, dy: Float) {

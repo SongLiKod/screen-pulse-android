@@ -16,7 +16,6 @@ import com.screenpulse.ui.ProjectionConsentActivity
 object OverlayRecordingStarter {
 
     fun start(context: Context) {
-        RecordingCache.ensureConfigLoaded(context)
         if (RecordingCache.config.recordMode == RecordMode.CUSTOM_REGION.value) {
             LogManager.log(LogManager.TAG_FLOAT, "OverlayRecordingStarter: select region on current screen")
             showRegionSelector(context, FloatingRegionSelectService.MODE_RECORD)
