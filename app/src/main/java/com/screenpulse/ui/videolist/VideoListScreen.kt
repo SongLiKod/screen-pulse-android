@@ -57,6 +57,7 @@ data class VideoItem(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoListScreen(
+    customSaveTreeUri: String = "",
     onBack: () -> Unit,
     onVideoClick: (String) -> Unit,
     onVideoTrim: (String) -> Unit
@@ -70,10 +71,10 @@ fun VideoListScreen(
         .collectAsState(initial = emptyList())
 
     fun refreshVideos() {
-        videos = loadVideos(context)
+        videos = loadVideos(context, customSaveTreeUri)
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(customSaveTreeUri) {
         refreshVideos()
     }
 
@@ -154,8 +155,8 @@ fun VideoListScreen(
                 text = { Text(stringResource(R.string.delete_confirm, video.name)) },
                 confirmButton = {
                     TextButton(onClick = {
-                        deleteVideo(context, video)
-                        videos = loadVideos(context)
+                         deleteVideo(context, video)
+                        videos = loadVideos(context, customSaveTreeUri)
                         showDeleteDialog = null
                     }) {
                         Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
@@ -182,8 +183,8 @@ fun VideoListScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        renameVideo(context, video, newName)
-                        videos = loadVideos(context)
+                         renameVideo(context, video, newName)
+                        videos = loadVideos(context, customSaveTreeUri)
                         showRenameDialog = null
                     }) { Text(stringResource(R.string.rename)) }
                 },
@@ -375,42 +376,20 @@ private fun RowScope.VideoAction(
     }
 }
 
-private fun loadVideos(context: Context): List<VideoItem> {
+private fun loadVideos(context: Context, customSaveTreeUri: String): List<VideoItem> {
     val items = mutableListOf<VideoItem>()
     val retriever = MediaMetadataRetriever()
+    val customUri = customSaveTreeUri.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+        ?: loadCustomSaveTreeUri(context)
 
-    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
-    if (dir.exists()) {
-        dir.listFiles { file -> file.extension.equals("mp4", true) && !file.name.endsWith(".edit.tmp.mp4") }?.forEach { file ->
-            if (file.length() < 1024) {
-                LogManager.log(LogManager.TAG_UI, "Skipping invalid/small video file: ${file.name} size=${file.length()}")
-                return@forEach
-            }
-            val duration = try {
-                retriever.setDataSource(file.absolutePath)
-                formatDuration(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L)
-            } catch (_: Exception) { "00:00" }
-            items.add(
-                VideoItem(
-                    file = file,
-                    name = file.name,
-                    size = file.length(),
-                    lastModified = file.lastModified(),
-                    duration = duration,
-                    displayPath = file.absolutePath
-                )
-            )
-        }
-    }
-
-    val customUri = loadCustomSaveTreeUri(context)
     if (customUri != null) {
         try {
             val treeDir = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, customUri)
             if (treeDir != null && treeDir.isDirectory) {
                 treeDir.listFiles()
-                    ?.filter { it.isFile && it.name?.endsWith(".mp4") == true }
+                    ?.filter { it.isFile && it.name?.endsWith(".mp4", ignoreCase = true) == true && it.name?.endsWith(".edit.tmp.mp4") != true }
                     ?.forEach { doc ->
+                        if (doc.length() < 1024) return@forEach
                         val duration = try {
                             retriever.setDataSource(context, doc.uri)
                             formatDuration(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L)
@@ -429,6 +408,30 @@ private fun loadVideos(context: Context): List<VideoItem> {
             }
         } catch (e: Exception) {
             LogManager.log(LogManager.TAG_UI, "loadVideos custom dir error: ${e.message}")
+        }
+    } else {
+        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "ScreenPulse")
+        if (dir.exists()) {
+            dir.listFiles { file -> file.extension.equals("mp4", true) && !file.name.endsWith(".edit.tmp.mp4") }?.forEach { file ->
+                if (file.length() < 1024) {
+                    LogManager.log(LogManager.TAG_UI, "Skipping invalid/small video file: ${file.name} size=${file.length()}")
+                    return@forEach
+                }
+                val duration = try {
+                    retriever.setDataSource(file.absolutePath)
+                    formatDuration(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L)
+                } catch (_: Exception) { "00:00" }
+                items.add(
+                    VideoItem(
+                        file = file,
+                        name = file.name,
+                        size = file.length(),
+                        lastModified = file.lastModified(),
+                        duration = duration,
+                        displayPath = file.absolutePath
+                    )
+                )
+            }
         }
     }
 
