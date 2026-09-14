@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -24,6 +23,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.screenpulse.navigation.Screen
+import com.screenpulse.navigation.decodePath
 import com.screenpulse.repository.ThemeMode
 import com.screenpulse.ui.home.HomeScreen
 import com.screenpulse.ui.log.LogScreen
@@ -101,7 +101,9 @@ class MainActivity : AppCompatActivity() {
                             )
                         }
                         composable(Screen.VideoList.route) {
+                            val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
                             VideoListScreen(
+                                customSaveTreeUri = customSaveTreeUri,
                                 onBack = { navController.popBackStack() },
                                 onVideoClick = { filePath ->
                                     navController.navigate(Screen.VideoPreview.createRoute(filePath))
@@ -115,7 +117,7 @@ class MainActivity : AppCompatActivity() {
                             route = Screen.VideoPreview.route,
                             arguments = listOf(navArgument("filePath") { type = NavType.StringType })
                         ) { backStackEntry ->
-                            val filePath = Uri.decode(backStackEntry.arguments?.getString("filePath") ?: "")
+                            val filePath = decodePath(backStackEntry.arguments?.getString("filePath") ?: "")
                             VideoPreviewScreen(
                                 filePath = filePath,
                                 onBack = { navController.popBackStack() },
@@ -126,7 +128,7 @@ class MainActivity : AppCompatActivity() {
                             route = Screen.VideoTrim.route,
                             arguments = listOf(navArgument("filePath") { type = NavType.StringType })
                         ) { backStackEntry ->
-                            val filePath = Uri.decode(backStackEntry.arguments?.getString("filePath") ?: "")
+                            val filePath = decodePath(backStackEntry.arguments?.getString("filePath") ?: "")
                             VideoTrimScreen(
                                 filePath = filePath,
                                 onBack = { navController.popBackStack() },

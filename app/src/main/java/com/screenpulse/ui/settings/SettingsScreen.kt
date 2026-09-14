@@ -26,15 +26,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import com.screenpulse.R
 import com.screenpulse.repository.*
 import com.screenpulse.floatingwindow.FloatingRegionSelectService
 import com.screenpulse.permission.PermissionManager
+import com.screenpulse.update.AppUpdateManager
+import com.screenpulse.update.InstallLaunchResult
+import com.screenpulse.update.UpdateCheckResult
+import com.screenpulse.update.UpdateInfo
 import com.screenpulse.util.LogManager
 import com.screenpulse.util.OverlayRecordingStarter
 import com.screenpulse.util.RegionPresets
 import com.screenpulse.viewmodel.SettingsViewModel
 import java.io.File
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -739,14 +746,100 @@ private fun KeyCaptureDialog(
     )
 }
 
+private sealed class UpdateUiState {
+    data object Idle : UpdateUiState()
+    data object Checking : UpdateUiState()
+    data object Latest : UpdateUiState()
+    data class Failed(val messageRes: Int) : UpdateUiState()
+    data class Available(val info: UpdateInfo) : UpdateUiState()
+    data class Downloading(val info: UpdateInfo, val progress: Int) : UpdateUiState()
+    data class ReadyToInstall(val info: UpdateInfo, val apk: File) : UpdateUiState()
+    data class NeedPermission(val info: UpdateInfo, val apk: File) : UpdateUiState()
+}
+
 @Composable
 private fun AboutCard() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val updater = remember { AppUpdateManager(context.applicationContext) }
+    var uiState by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
+    var statusRes by remember { mutableStateOf<Int?>(null) }
     val versionName = remember {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull().orEmpty().ifBlank { "2.0.0" }
+        }.getOrNull().orEmpty().ifBlank { "2.1.0" }
     }
+
+    DisposableEffect(Unit) {
+        onDispose { downloadJob?.cancel() }
+    }
+
+    fun tryInstall(apk: File, info: UpdateInfo) {
+        when (updater.installApk(apk)) {
+            InstallLaunchResult.Started -> {
+                statusRes = null
+                uiState = UpdateUiState.Idle
+            }
+            InstallLaunchResult.NeedPermission -> uiState = UpdateUiState.NeedPermission(info, apk)
+            InstallLaunchResult.Failed -> {
+                statusRes = R.string.update_install_failed
+                uiState = UpdateUiState.ReadyToInstall(info, apk)
+            }
+        }
+    }
+
+    val installPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        val (apk, info) = when (val state = uiState) {
+            is UpdateUiState.NeedPermission -> state.apk to state.info
+            is UpdateUiState.ReadyToInstall -> state.apk to state.info
+            else -> null to null
+        }
+        if (apk != null && info != null && updater.canInstallPackages()) {
+            tryInstall(apk, info)
+        }
+    }
+
+    fun startDownload(info: UpdateInfo) {
+        downloadJob?.cancel()
+        statusRes = null
+        uiState = UpdateUiState.Downloading(info, 0)
+        downloadJob = scope.launch {
+            val dest = updater.apkFile()
+            val result = updater.downloadApk(info.apkUrl, dest) { percent ->
+                uiState = UpdateUiState.Downloading(info, percent)
+            }
+            result.fold(
+                onSuccess = { file -> tryInstall(file, info) },
+                onFailure = {
+                    statusRes = R.string.update_download_failed
+                    uiState = UpdateUiState.Available(info)
+                }
+            )
+        }
+    }
+
+    fun checkForUpdates() {
+        if (uiState is UpdateUiState.Checking || uiState is UpdateUiState.Downloading) return
+        statusRes = null
+        uiState = UpdateUiState.Checking
+        scope.launch {
+            when (val result = updater.checkUpdate()) {
+                is UpdateCheckResult.Available -> uiState = UpdateUiState.Available(result.info)
+                UpdateCheckResult.AlreadyLatest -> {
+                    statusRes = R.string.update_already_latest
+                    uiState = UpdateUiState.Latest
+                }
+                is UpdateCheckResult.Error -> {
+                    statusRes = if (result.reason == "no_apk") R.string.update_no_apk else R.string.update_check_failed
+                    uiState = UpdateUiState.Failed(statusRes!!)
+                }
+            }
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -773,7 +866,147 @@ private fun AboutCard() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 20.sp
             )
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = { checkForUpdates() },
+                enabled = uiState !is UpdateUiState.Checking && uiState !is UpdateUiState.Downloading,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) {
+                if (uiState is UpdateUiState.Checking) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.checking_update))
+                } else {
+                    Text(stringResource(R.string.btn_check_update))
+                }
+            }
+            statusRes?.let { res ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(res),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
+    }
+
+    when (val state = uiState) {
+        is UpdateUiState.Available -> {
+            AlertDialog(
+                onDismissRequest = { uiState = UpdateUiState.Idle },
+                title = { Text(stringResource(R.string.update_available_title, state.info.versionName)) },
+                text = {
+                    Column {
+                        val size = updater.formatSize(state.info.apkSize)
+                        if (size.isNotEmpty()) {
+                            Text(
+                                text = stringResource(R.string.update_size, size),
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                        if (state.info.changelog.isNotBlank()) {
+                            Text(
+                                text = stringResource(R.string.update_changelog),
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = state.info.changelog,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .heightIn(max = 240.dp)
+                                    .verticalScroll(rememberScrollState())
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { startDownload(state.info) }) {
+                        Text(stringResource(R.string.update_download))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { uiState = UpdateUiState.Idle }) {
+                        Text(stringResource(R.string.update_later))
+                    }
+                }
+            )
+        }
+        is UpdateUiState.Downloading -> {
+            AlertDialog(
+                onDismissRequest = {},
+                properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+                title = { Text(stringResource(R.string.update_downloading)) },
+                text = {
+                    Column {
+                        if (state.progress < 0) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        } else {
+                            LinearProgressIndicator(
+                                progress = state.progress / 100f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("${state.progress}%")
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = {
+                        downloadJob?.cancel()
+                        uiState = UpdateUiState.Available(state.info)
+                    }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
+        }
+        is UpdateUiState.NeedPermission -> {
+            AlertDialog(
+                onDismissRequest = { uiState = UpdateUiState.Idle },
+                title = { Text(stringResource(R.string.update_install)) },
+                text = { Text(stringResource(R.string.update_need_permission)) },
+                confirmButton = {
+                    TextButton(onClick = { installPermissionLauncher.launch(updater.installPermissionIntent()) }) {
+                        Text(stringResource(R.string.update_grant_permission))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { uiState = UpdateUiState.Idle }) {
+                        Text(stringResource(R.string.update_later))
+                    }
+                }
+            )
+        }
+        is UpdateUiState.ReadyToInstall -> {
+            AlertDialog(
+                onDismissRequest = { uiState = UpdateUiState.Idle },
+                title = { Text(stringResource(R.string.update_available_title, state.info.versionName)) },
+                text = { Text(stringResource(R.string.update_install)) },
+                confirmButton = {
+                    TextButton(onClick = { tryInstall(state.apk, state.info) }) {
+                        Text(stringResource(R.string.update_install))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { uiState = UpdateUiState.Idle }) {
+                        Text(stringResource(R.string.update_later))
+                    }
+                }
+            )
+        }
+        else -> Unit
     }
 }
 

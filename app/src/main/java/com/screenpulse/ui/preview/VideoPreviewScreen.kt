@@ -89,10 +89,17 @@ fun VideoPreviewScreen(
     val videoUri = remember(filePath) {
         if (isContentUri) Uri.parse(filePath) else Uri.fromFile(File(filePath))
     }
-    val displayName = file?.name ?: filePath.substringAfterLast('/').ifEmpty { "video.mp4" }
+    val document = remember(filePath) {
+        if (isContentUri) runCatching {
+            androidx.documentfile.provider.DocumentFile.fromSingleUri(context, videoUri)
+        }.getOrNull() else null
+    }
+    val displayName = file?.name
+        ?: document?.name
+        ?: Uri.decode(filePath.substringAfterLast('/')).ifEmpty { "video.mp4" }
     val displayPath = file?.absolutePath ?: filePath
-    val exists = file != null && file.exists()
-    val length = file?.length() ?: -1L
+    val exists = if (isContentUri) document?.exists() != false else file != null && file.exists()
+    val length = file?.length() ?: document?.length() ?: -1L
     val playable = isContentUri || (exists && length > 0)
 
     var isPlaying by remember { mutableStateOf(false) }
