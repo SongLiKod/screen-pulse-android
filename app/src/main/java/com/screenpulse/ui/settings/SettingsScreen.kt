@@ -768,7 +768,7 @@ private fun AboutCard() {
     val versionName = remember {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull().orEmpty().ifBlank { "2.0.0" }
+        }.getOrNull().orEmpty().ifBlank { "2.1.0" }
     }
 
     DisposableEffect(Unit) {
