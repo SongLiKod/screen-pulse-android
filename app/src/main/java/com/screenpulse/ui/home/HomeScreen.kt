@@ -28,7 +28,10 @@ import com.screenpulse.floatingwindow.FloatingWindowService
 import com.screenpulse.permission.PermissionManager
 import com.screenpulse.R
 import com.screenpulse.repository.AudioMode
+import com.screenpulse.repository.CountdownMode
+import com.screenpulse.repository.FrameRate
 import com.screenpulse.repository.RecordMode
+import com.screenpulse.repository.Resolution
 import com.screenpulse.service.ScreenRecordService
 import com.screenpulse.viewmodel.RecordingState
 import com.screenpulse.viewmodel.RecordingViewModel
@@ -60,6 +63,8 @@ fun HomeScreen(
     val recordMode by settingsViewModel.recordMode.collectAsState()
     val resolution by settingsViewModel.resolution.collectAsState()
     val frameRate by settingsViewModel.frameRate.collectAsState()
+    val countdownMode by settingsViewModel.countdownMode.collectAsState()
+    val customCountdownSeconds by settingsViewModel.customCountdownSeconds.collectAsState()
     val pipEnabled by settingsViewModel.pipEnabled.collectAsState()
     val pipSize by settingsViewModel.pipSize.collectAsState()
     val floatingWindowPersistent by settingsViewModel.floatingWindowPersistent.collectAsState()
@@ -240,25 +245,25 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             CurrentParamsCard(
-                resolution = resolution.value,
-                frameRate = stringResource(R.string.fps_format, "${frameRate.value}"),
-                audioMode = when (audioMode) {
-                    AudioMode.SYSTEM_ONLY -> stringResource(R.string.audio_short_system)
-                    AudioMode.MIC_ONLY -> stringResource(R.string.audio_short_mic)
-                    AudioMode.MIXED -> stringResource(R.string.audio_short_mixed)
-                },
-                recordMode = if (recordMode == RecordMode.FULL_SCREEN) stringResource(R.string.full_screen_record)
-                else stringResource(R.string.region_record),
-                onAudioModeClick = {
-                    val modes = AudioMode.entries
-                    val nextIndex = (modes.indexOf(audioMode) + 1) % modes.size
-                    settingsViewModel.setAudioMode(modes[nextIndex])
-                },
-                onRecordModeClick = {
-                    val newMode = if (recordMode == RecordMode.FULL_SCREEN) RecordMode.CUSTOM_REGION else RecordMode.FULL_SCREEN
-                    settingsViewModel.setRecordMode(newMode)
-                },
-                isRecording = recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED
+                resolution = resolution,
+                frameRate = frameRate,
+                audioMode = audioMode,
+                recordMode = recordMode,
+                countdownMode = countdownMode,
+                customCountdownSeconds = customCountdownSeconds,
+                floatingWindowPersistent = floatingWindowPersistent,
+                isRecording = recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED,
+                onResolutionSelected = { settingsViewModel.setResolution(it) },
+                onFrameRateSelected = { settingsViewModel.setFrameRate(it) },
+                onAudioModeSelected = { settingsViewModel.setAudioMode(it) },
+                onRecordModeSelected = { settingsViewModel.setRecordMode(it) },
+                onCountdownSelected = { settingsViewModel.setCountdownMode(it) },
+                onFloatingWindowChanged = { enabled ->
+                    settingsViewModel.setFloatingWindowPersistent(enabled)
+                    if (enabled && !PermissionManager.hasOverlayPermission(context)) {
+                        context.startActivity(PermissionManager.overlaySettingsIntent(context))
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -403,14 +408,45 @@ private fun StatusCard(state: RecordingState, duration: Long) {
 
 @Composable
 private fun CurrentParamsCard(
-    resolution: String,
-    frameRate: String,
-    audioMode: String,
-    recordMode: String,
-    onAudioModeClick: () -> Unit = {},
-    onRecordModeClick: () -> Unit = {},
+    resolution: Resolution,
+    frameRate: FrameRate,
+    audioMode: AudioMode,
+    recordMode: RecordMode,
+    countdownMode: CountdownMode,
+    customCountdownSeconds: Int,
+    floatingWindowPersistent: Boolean,
+    onResolutionSelected: (Resolution) -> Unit,
+    onFrameRateSelected: (FrameRate) -> Unit,
+    onAudioModeSelected: (AudioMode) -> Unit,
+    onRecordModeSelected: (RecordMode) -> Unit,
+    onCountdownSelected: (CountdownMode) -> Unit,
+    onFloatingWindowChanged: (Boolean) -> Unit,
     isRecording: Boolean = false
 ) {
+    val resolutionOptions = Resolution.entries.map { it to it.value }
+    val frameRateOptions = FrameRate.entries.map { it to stringResource(R.string.fps_format, "${it.value}") }
+    val audioOptions = AudioMode.entries.map { mode ->
+        mode to when (mode) {
+            AudioMode.SYSTEM_ONLY -> stringResource(R.string.audio_short_system)
+            AudioMode.MIC_ONLY -> stringResource(R.string.audio_short_mic)
+            AudioMode.MIXED -> stringResource(R.string.audio_short_mixed)
+        }
+    }
+    val recordModeOptions = RecordMode.entries.map { mode ->
+        mode to when (mode) {
+            RecordMode.FULL_SCREEN -> stringResource(R.string.full_screen_record)
+            RecordMode.CUSTOM_REGION -> stringResource(R.string.region_record)
+        }
+    }
+    val countdownOptions = CountdownMode.entries.map { mode ->
+        mode to when (mode) {
+            CountdownMode.NONE -> stringResource(R.string.countdown_none)
+            CountdownMode.THREE_SECONDS -> stringResource(R.string.countdown_3s)
+            CountdownMode.FIVE_SECONDS -> stringResource(R.string.countdown_5s)
+            CountdownMode.CUSTOM -> stringResource(R.string.countdown_custom_time, customCountdownSeconds)
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -421,76 +457,133 @@ private fun CurrentParamsCard(
         Column(modifier = Modifier.padding(16.dp)) {
             Text(stringResource(R.string.current_settings), fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(8.dp))
-            ParamRow(stringResource(R.string.param_resolution), resolution)
-            ParamRow(stringResource(R.string.param_frame_rate), frameRate)
+
+            ParamDropdownRow(
+                label = stringResource(R.string.param_resolution),
+                value = resolution.value,
+                options = resolutionOptions,
+                enabled = !isRecording,
+                onSelected = onResolutionSelected
+            )
+            ParamDropdownRow(
+                label = stringResource(R.string.param_frame_rate),
+                value = stringResource(R.string.fps_format, "${frameRate.value}"),
+                options = frameRateOptions,
+                enabled = !isRecording,
+                onSelected = onFrameRateSelected
+            )
+            ParamDropdownRow(
+                label = stringResource(R.string.param_audio),
+                value = audioOptions.first { it.first == audioMode }.second,
+                options = audioOptions,
+                enabled = !isRecording,
+                onSelected = onAudioModeSelected
+            )
+            ParamDropdownRow(
+                label = stringResource(R.string.param_mode),
+                value = recordModeOptions.first { it.first == recordMode }.second,
+                options = recordModeOptions,
+                enabled = !isRecording,
+                onSelected = onRecordModeSelected
+            )
+            ParamDropdownRow(
+                label = stringResource(R.string.countdown),
+                value = countdownOptions.first { it.first == countdownMode }.second,
+                options = countdownOptions,
+                enabled = !isRecording,
+                onSelected = onCountdownSelected
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
+            Spacer(modifier = Modifier.height(4.dp))
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = !isRecording) { onAudioModeClick() }
-                    .padding(vertical = 2.dp),
+                    .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(stringResource(R.string.param_audio), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        audioMode,
-                        color = if (isRecording) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        else MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
+                        stringResource(R.string.floating_window),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp
                     )
-                    if (!isRecording) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Default.SwapHoriz,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = !isRecording) { onRecordModeClick() }
-                    .padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(stringResource(R.string.param_mode), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        recordMode,
-                        color = if (isRecording) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        else MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
+                        stringResource(
+                            if (floatingWindowPersistent) R.string.show_floating_window
+                            else R.string.hide_floating_window
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        fontSize = 11.sp
                     )
-                    if (!isRecording) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Default.SwapHoriz,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
                 }
+                Switch(
+                    checked = floatingWindowPersistent,
+                    onCheckedChange = onFloatingWindowChanged,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ParamRow(label: String, value: String) {
+private fun <T> ParamDropdownRow(
+    label: String,
+    value: String,
+    options: List<Pair<T, String>>,
+    enabled: Boolean,
+    onSelected: (T) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .clickable(enabled = enabled) { expanded = true }
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-        Text(value, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+        Box {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    value,
+                    color = if (enabled) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 13.sp
+                )
+                if (enabled) {
+                    Icon(
+                        Icons.Default.ArrowDropDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                options.forEach { (option, optionLabel) ->
+                    DropdownMenuItem(
+                        text = { Text(optionLabel) },
+                        onClick = {
+                            onSelected(option)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 
