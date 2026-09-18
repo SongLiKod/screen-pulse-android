@@ -224,9 +224,10 @@ fun HomeScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.weight(0.5f))
 
             RecordButton(
+                modifier = Modifier.weight(1f, fill = false),
                 state = recordingState,
                 duration = duration,
                 countdown = countdown,
@@ -238,7 +239,7 @@ fun HomeScreen(
                 }
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             StatusCard(state = recordingState, duration = duration)
 
@@ -292,48 +293,60 @@ private fun RecordButton(
     state: RecordingState,
     duration: Long,
     countdown: Int,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onStop: () -> Unit
 ) {
     val isRecording = state == RecordingState.RECORDING || state == RecordingState.PAUSED
     val isCountdown = state == RecordingState.COUNTDOWN
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .size(140.dp)
-                .clip(CircleShape)
-                .background(
-                    when {
-                        isCountdown -> MaterialTheme.colorScheme.secondary
-                        isRecording -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.primary
-                    }
-                )
-                .clickable(enabled = !isCountdown) {
-                    if (isRecording) onStop() else onClick()
-                },
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
-            when {
-                isCountdown -> Text(
-                    "$countdown",
-                    fontSize = 48.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondary
-                )
-                isRecording -> Icon(
-                    Icons.Default.Stop,
-                    contentDescription = stringResource(R.string.cd_stop),
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onError
-                )
-                else -> Icon(
-                    Icons.Default.FiberManualRecord,
-                    contentDescription = stringResource(R.string.cd_start_record),
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
+            val diameter = minOf(maxWidth, maxHeight).coerceIn(80.dp, 140.dp)
+            val iconSize = (diameter / 3).coerceIn(32.dp, 56.dp)
+
+            Box(
+                modifier = Modifier
+                    .requiredSize(diameter)
+                    .clip(CircleShape)
+                    .background(
+                        when {
+                            isCountdown -> MaterialTheme.colorScheme.secondary
+                            isRecording -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+                    )
+                    .clickable(enabled = !isCountdown) {
+                        if (isRecording) onStop() else onClick()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    isCountdown -> Text(
+                        "$countdown",
+                        fontSize = (diameter / 3).value.coerceIn(28f, 48f).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSecondary
+                    )
+                    isRecording -> Icon(
+                        Icons.Default.Stop,
+                        contentDescription = stringResource(R.string.cd_stop),
+                        modifier = Modifier.size(iconSize),
+                        tint = MaterialTheme.colorScheme.onError
+                    )
+                    else -> Icon(
+                        Icons.Default.FiberManualRecord,
+                        contentDescription = stringResource(R.string.cd_start_record),
+                        modifier = Modifier.size(iconSize),
+                        tint = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
             }
         }
 
@@ -602,7 +615,7 @@ private fun ActionButton(
             icon,
             contentDescription = label,
             modifier = Modifier
-                .size(48.dp)
+                .requiredSize(48.dp)
                 .clip(CircleShape)
                 .background(
                     if (enabled) MaterialTheme.colorScheme.primaryContainer
