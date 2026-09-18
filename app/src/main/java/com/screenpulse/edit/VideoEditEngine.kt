@@ -55,16 +55,38 @@ object VideoEditEngine {
         val valid = ranges.filter { it.durationMs >= 80L }
         if (valid.isEmpty()) return false
         return try {
-            val size = videoSize(context, inputPath)
-            val pixelCrop = if (crop == null || crop.isIdentity || size == null) {
+            val encodedSize = encodedVideoSize(context, inputPath)
+            val rotation = videoRotation(context, inputPath)
+            val displaySize = encodedSize?.let { orientedSize(it.first, it.second, rotation) }
+            val encodedCrop = if (crop == null || crop.isIdentity || encodedSize == null || displaySize == null) {
                 null
             } else {
-                crop.toPixelRect(size.first, size.second)
+                val displayCrop = crop.toPixelRect(displaySize.first, displaySize.second)
+                mapDisplayCropToEncoded(
+                    displayCrop,
+                    displaySize.first,
+                    displaySize.second,
+                    encodedSize.first,
+                    encodedSize.second,
+                    rotation
+                )
             }
-            val needsCrop = pixelCrop != null &&
-                (pixelCrop.width() < size!!.first - 2 || pixelCrop.height() < size.second - 2)
-            val ok = if (needsCrop) {
-                remuxWithCrop(context, inputPath, outputPath, valid, mute, pixelCrop!!)
+            val ok = if (
+                encodedCrop != null &&
+                encodedSize != null &&
+                (encodedCrop.width() < encodedSize.first - 2 || encodedCrop.height() < encodedSize.second - 2)
+            ) {
+                remuxWithCrop(
+                    context,
+                    inputPath,
+                    outputPath,
+                    valid,
+                    mute,
+                    encodedCrop,
+                    encodedSize.first,
+                    encodedSize.second,
+                    rotation
+                )
             } else {
                 remux(context, inputPath, outputPath, valid, mute)
             }
@@ -154,6 +176,11 @@ object VideoEditEngine {
             runCatching { retriever.release() }
         }
         return frames
+    }
+
+    fun displaySize(context: Context, path: String): Pair<Int, Int>? {
+        val encoded = encodedVideoSize(context, path) ?: return null
+        return orientedSize(encoded.first, encoded.second, videoRotation(context, path))
     }
 
     fun durationMs(context: Context, path: String): Long {
@@ -291,7 +318,10 @@ object VideoEditEngine {
         outputPath: String,
         ranges: List<KeepRange>,
         mute: Boolean,
-        crop: Rect
+        crop: Rect,
+        encodedW: Int,
+        encodedH: Int,
+        rotation: Int
     ): Boolean {
         val extractor = MediaExtractor()
         val audioExtractor = MediaExtractor()
@@ -307,7 +337,10 @@ object VideoEditEngine {
             val outW = crop.width().coerceAtLeast(2) and 1.inv()
             val outH = crop.height().coerceAtLeast(2) and 1.inv()
             File(outputPath).parentFile?.mkdirs()
-            muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val outputMuxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = outputMuxer
+            val hint = ((rotation % 360) + 360) % 360
+            if (hint != 0) outputMuxer.setOrientationHint(hint)
 
             val fps = srcFormat.integerOr(MediaFormat.KEY_FRAME_RATE, 30).coerceIn(1, 60)
             encoder = createAvcEncoder(outW, outH, fps) ?: return false
@@ -320,7 +353,7 @@ object VideoEditEngine {
                 openExtractor(context, audioExtractor, inputPath)
                 audioSrc = findTrack(audioExtractor, "audio/") ?: -1
                 if (audioSrc >= 0) {
-                    audioDst = muxer.addTrack(audioExtractor.getTrackFormat(audioSrc))
+                    audioDst = outputMuxer.addTrack(audioExtractor.getTrackFormat(audioSrc))
                 }
             }
 
@@ -328,7 +361,7 @@ object VideoEditEngine {
             val decInfo = MediaCodec.BufferInfo()
             val encInfo = MediaCodec.BufferInfo()
             val yuv = ByteArray(outW * outH * 3 / 2)
-            val mux = muxer
+            val mux = outputMuxer
             val dec = decoder
             val enc = encoder
             var videoDst = -1
@@ -386,7 +419,7 @@ object VideoEditEngine {
                 val inIndex = enc.dequeueInputBuffer(100_000L)
                 if (inIndex < 0) return false
                 val input = enc.getInputBuffer(inIndex)
-                if (input == null || !cropYuvToNv12(image, crop, outW, outH, yuv)) {
+                if (input == null || !cropYuvToNv12(image, crop, encodedW, encodedH, outW, outH, yuv)) {
                     enc.queueInputBuffer(inIndex, 0, 0, ptsUs, 0)
                     return false
                 }
@@ -537,7 +570,15 @@ object VideoEditEngine {
         }.getOrNull()
     }
 
-    private fun cropYuvToNv12(image: Image, crop: Rect, outW: Int, outH: Int, out: ByteArray): Boolean {
+    private fun cropYuvToNv12(
+        image: Image,
+        crop: Rect,
+        cropSpaceW: Int,
+        cropSpaceH: Int,
+        outW: Int,
+        outH: Int,
+        out: ByteArray
+    ): Boolean {
         return try {
             if (image.planes.size < 3) return false
             val yPlane = image.planes[0]
@@ -552,30 +593,37 @@ object VideoEditEngine {
             val uPix = uPlane.pixelStride.coerceAtLeast(1)
             val vRow = vPlane.rowStride.coerceAtLeast(1)
             val vPix = vPlane.pixelStride.coerceAtLeast(1)
-            val srcW = image.width.coerceAtLeast(1)
-            val srcH = image.height.coerceAtLeast(1)
-            val left = crop.left.coerceIn(0, srcW - 2) and 1.inv()
-            val top = crop.top.coerceIn(0, srcH - 2) and 1.inv()
-            val cropW = crop.width().coerceAtLeast(2)
-            val cropH = crop.height().coerceAtLeast(2)
+            val picture = image.cropRect
+            val picW = picture.width().coerceAtLeast(2)
+            val picH = picture.height().coerceAtLeast(2)
+            val spaceW = cropSpaceW.coerceAtLeast(2)
+            val spaceH = cropSpaceH.coerceAtLeast(2)
+            val left = (picture.left + crop.left * picW / spaceW)
+                .coerceIn(picture.left, picture.right - 2) and 1.inv()
+            val top = (picture.top + crop.top * picH / spaceH)
+                .coerceIn(picture.top, picture.bottom - 2) and 1.inv()
+            val cropW = (crop.width() * picW / spaceW).coerceAtLeast(2)
+            val cropH = (crop.height() * picH / spaceH).coerceAtLeast(2)
+            val maxX = picture.right - 1
+            val maxY = picture.bottom - 1
             val yLimit = yBuf.limit()
             val uLimit = uBuf.limit()
             val vLimit = vBuf.limit()
             val ySize = outW * outH
             var dst = 0
             for (row in 0 until outH) {
-                val sy = (top + row * cropH / outH).coerceIn(0, srcH - 1)
+                val sy = (top + row * cropH / outH).coerceIn(picture.top, maxY)
                 for (col in 0 until outW) {
-                    val sx = (left + col * cropW / outW).coerceIn(0, srcW - 1)
+                    val sx = (left + col * cropW / outW).coerceIn(picture.left, maxX)
                     val index = sy * yRow + sx * yPix
                     out[dst++] = if (index in 0 until yLimit) yBuf.get(index) else 16
                 }
             }
             var uv = ySize
             for (row in 0 until outH step 2) {
-                val sy = (top + row * cropH / outH).coerceIn(0, srcH - 1) and 1.inv()
+                val sy = (top + row * cropH / outH).coerceIn(picture.top, maxY) and 1.inv()
                 for (col in 0 until outW step 2) {
-                    val sx = (left + col * cropW / outW).coerceIn(0, srcW - 1) and 1.inv()
+                    val sx = (left + col * cropW / outW).coerceIn(picture.left, maxX) and 1.inv()
                     val uvX = sx / 2
                     val uvY = sy / 2
                     val uIndex = uvY * uRow + uvX * uPix
@@ -587,6 +635,80 @@ object VideoEditEngine {
             true
         } catch (_: Exception) {
             false
+        }
+    }
+
+    private fun orientedSize(width: Int, height: Int, rotation: Int): Pair<Int, Int> {
+        return if (rotation == 90 || rotation == 270) height to width else width to height
+    }
+
+    private fun mapDisplayCropToEncoded(
+        displayCrop: Rect,
+        displayW: Int,
+        displayH: Int,
+        encodedW: Int,
+        encodedH: Int,
+        rotation: Int
+    ): Rect {
+        val r = ((rotation % 360) + 360) % 360
+        fun map(x: Int, y: Int): Pair<Int, Int> {
+            val cx = x.coerceIn(0, (displayW - 1).coerceAtLeast(0))
+            val cy = y.coerceIn(0, (displayH - 1).coerceAtLeast(0))
+            return when (r) {
+                90 -> cy to (encodedH - 1 - cx)
+                180 -> (encodedW - 1 - cx) to (encodedH - 1 - cy)
+                270 -> (encodedW - 1 - cy) to cx
+                else -> cx to cy
+            }
+        }
+        val rightInclusive = (displayCrop.right - 1).coerceAtLeast(displayCrop.left)
+        val bottomInclusive = (displayCrop.bottom - 1).coerceAtLeast(displayCrop.top)
+        val points = listOf(
+            map(displayCrop.left, displayCrop.top),
+            map(rightInclusive, displayCrop.top),
+            map(displayCrop.left, bottomInclusive),
+            map(rightInclusive, bottomInclusive)
+        )
+        val xs = points.map { it.first }
+        val ys = points.map { it.second }
+        val l = xs.minOrNull()?.coerceIn(0, encodedW - 2) ?: 0
+        val t = ys.minOrNull()?.coerceIn(0, encodedH - 2) ?: 0
+        val mappedRight = (xs.maxOrNull() ?: l) + 1
+        val mappedBottom = (ys.maxOrNull() ?: t) + 1
+        val rr = mappedRight.coerceIn(l + 2, encodedW)
+        val b = mappedBottom.coerceIn(t + 2, encodedH)
+        val evenW = (rr - l) and 1.inv()
+        val evenH = (b - t) and 1.inv()
+        return Rect(l, t, l + evenW.coerceAtLeast(2), t + evenH.coerceAtLeast(2))
+    }
+
+    private fun videoRotation(context: Context, path: String): Int {
+        val retriever = MediaMetadataRetriever()
+        try {
+            openRetriever(context, retriever, path)
+            val fromMeta = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
+            )?.toIntOrNull()
+            if (fromMeta != null) return ((fromMeta % 360) + 360) % 360
+        } catch (_: Exception) {
+        } finally {
+            runCatching { retriever.release() }
+        }
+        val extractor = MediaExtractor()
+        return try {
+            openExtractor(context, extractor, path)
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("video/") && format.containsKey(MediaFormat.KEY_ROTATION)) {
+                    return ((format.getInteger(MediaFormat.KEY_ROTATION) % 360) + 360) % 360
+                }
+            }
+            0
+        } catch (_: Exception) {
+            0
+        } finally {
+            runCatching { extractor.release() }
         }
     }
 
@@ -621,11 +743,11 @@ object VideoEditEngine {
         }
     }
 
-    private fun videoSize(context: Context, path: String): Pair<Int, Int>? {
+    private fun encodedVideoSize(context: Context, path: String): Pair<Int, Int>? {
         val extractor = MediaExtractor()
         return try {
             openExtractor(context, extractor, path)
-            videoSize(extractor)
+            encodedVideoSize(extractor)
         } catch (_: Exception) {
             null
         } finally {
@@ -633,7 +755,7 @@ object VideoEditEngine {
         }
     }
 
-    private fun videoSize(extractor: MediaExtractor): Pair<Int, Int>? {
+    private fun encodedVideoSize(extractor: MediaExtractor): Pair<Int, Int>? {
         for (i in 0 until extractor.trackCount) {
             val format = extractor.getTrackFormat(i)
             val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
