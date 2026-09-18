@@ -55,34 +55,36 @@ object VideoEditEngine {
         val valid = ranges.filter { it.durationMs >= 80L }
         if (valid.isEmpty()) return false
         return try {
-            val encoded = encodedVideoSize(context, inputPath)
+            val encodedSize = encodedVideoSize(context, inputPath)
             val rotation = videoRotation(context, inputPath)
-            val display = encoded?.let { orientedSize(it.first, it.second, rotation) }
-            val pixelCrop = if (crop == null || crop.isIdentity || encoded == null || display == null) {
+            val displaySize = encodedSize?.let { orientedSize(it.first, it.second, rotation) }
+            val encodedCrop = if (crop == null || crop.isIdentity || encodedSize == null || displaySize == null) {
                 null
             } else {
-                val displayCrop = crop.toPixelRect(display.first, display.second)
+                val displayCrop = crop.toPixelRect(displaySize.first, displaySize.second)
                 mapDisplayCropToEncoded(
                     displayCrop,
-                    display.first,
-                    display.second,
-                    encoded.first,
-                    encoded.second,
+                    displaySize.first,
+                    displaySize.second,
+                    encodedSize.first,
+                    encodedSize.second,
                     rotation
                 )
             }
-            val needsCrop = pixelCrop != null &&
-                (pixelCrop.width() < encoded!!.first - 2 || pixelCrop.height() < encoded.second - 2)
-            val ok = if (needsCrop) {
+            val ok = if (
+                encodedCrop != null &&
+                encodedSize != null &&
+                (encodedCrop.width() < encodedSize.first - 2 || encodedCrop.height() < encodedSize.second - 2)
+            ) {
                 remuxWithCrop(
                     context,
                     inputPath,
                     outputPath,
                     valid,
                     mute,
-                    pixelCrop!!,
-                    encoded.first,
-                    encoded.second,
+                    encodedCrop,
+                    encodedSize.first,
+                    encodedSize.second,
                     rotation
                 )
             } else {
@@ -335,9 +337,10 @@ object VideoEditEngine {
             val outW = crop.width().coerceAtLeast(2) and 1.inv()
             val outH = crop.height().coerceAtLeast(2) and 1.inv()
             File(outputPath).parentFile?.mkdirs()
-            muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val outputMuxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = outputMuxer
             val hint = ((rotation % 360) + 360) % 360
-            if (hint != 0) muxer.setOrientationHint(hint)
+            if (hint != 0) outputMuxer.setOrientationHint(hint)
 
             val fps = srcFormat.integerOr(MediaFormat.KEY_FRAME_RATE, 30).coerceIn(1, 60)
             encoder = createAvcEncoder(outW, outH, fps) ?: return false
@@ -350,7 +353,7 @@ object VideoEditEngine {
                 openExtractor(context, audioExtractor, inputPath)
                 audioSrc = findTrack(audioExtractor, "audio/") ?: -1
                 if (audioSrc >= 0) {
-                    audioDst = muxer.addTrack(audioExtractor.getTrackFormat(audioSrc))
+                    audioDst = outputMuxer.addTrack(audioExtractor.getTrackFormat(audioSrc))
                 }
             }
 
@@ -358,7 +361,7 @@ object VideoEditEngine {
             val decInfo = MediaCodec.BufferInfo()
             val encInfo = MediaCodec.BufferInfo()
             val yuv = ByteArray(outW * outH * 3 / 2)
-            val mux = muxer
+            val mux = outputMuxer
             val dec = decoder
             val enc = encoder
             var videoDst = -1
