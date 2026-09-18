@@ -491,7 +491,6 @@ fun VideoPreviewScreen(
                                     }
                                 }
                             )
-                            overlay()
                         } else {
                             Text(
                                 text = stringResource(
@@ -502,6 +501,9 @@ fun VideoPreviewScreen(
                                 modifier = Modifier.align(Alignment.Center)
                             )
                         }
+                    }
+                    if (playable) {
+                        overlay()
                     }
                 }
 
