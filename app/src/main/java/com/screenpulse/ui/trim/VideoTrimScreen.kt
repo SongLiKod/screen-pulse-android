@@ -92,6 +92,7 @@ fun VideoTrimScreen(
     var showOverwrite by remember { mutableStateOf(false) }
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    var videoAspect by remember { mutableFloatStateOf(16f / 9f) }
 
     val selected = ranges.getOrNull(selectedIndex) ?: ranges.firstOrNull()
 
@@ -100,6 +101,10 @@ fun VideoTrimScreen(
         durationMs = ms
         ranges = listOf(KeepRange(0L, ms.coerceAtLeast(80L)))
         selectedIndex = 0
+        val size = withContext(Dispatchers.IO) { VideoEditEngine.displaySize(context, filePath) }
+        if (size != null && size.first > 0 && size.second > 0) {
+            videoAspect = size.first.toFloat() / size.second.toFloat()
+        }
         strip = withContext(Dispatchers.IO) { VideoEditEngine.loadStrip(context, filePath, 8) }
     }
 
@@ -209,43 +214,52 @@ fun VideoTrimScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black)
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
             ) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        VideoView(ctx).apply {
-                            setOnErrorListener { _, _, _ -> true }
-                            setOnPreparedListener { mp ->
-                                mediaPlayer = mp
-                                mp.isLooping = false
-                                val volume = if (mute) 0f else 1f
-                                mp.setVolume(volume, volume)
-                            }
-                            setOnCompletionListener {
-                                isPlaying = false
-                                val range = ranges.getOrNull(selectedIndex)
-                                if (looping && range != null) {
-                                    seekTo(range.startMs)
-                                    start()
-                                    isPlaying = true
+                val frameAspect = videoAspect.coerceIn(9f / 21f, 21f / 9f)
+                val playerModifier = if (maxHeight <= 0.dp || maxWidth / maxHeight <= frameAspect) {
+                    Modifier.fillMaxWidth().aspectRatio(frameAspect)
+                } else {
+                    Modifier.fillMaxHeight().aspectRatio(frameAspect)
+                }
+                Box(modifier = playerModifier) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                setOnErrorListener { _, _, _ -> true }
+                                setOnPreparedListener { mp ->
+                                    mediaPlayer = mp
+                                    mp.isLooping = false
+                                    val volume = if (mute) 0f else 1f
+                                    mp.setVolume(volume, volume)
                                 }
+                                setOnCompletionListener {
+                                    isPlaying = false
+                                    val range = ranges.getOrNull(selectedIndex)
+                                    if (looping && range != null) {
+                                        seekTo(range.startMs)
+                                        start()
+                                        isPlaying = true
+                                    }
+                                }
+                                setVideoURI(videoUri)
+                                videoViewRef = this
                             }
-                            setVideoURI(videoUri)
-                            videoViewRef = this
                         }
-                    }
-                )
-                if (cropMode) {
-                    CropOverlay(
-                        crop = crop,
-                        onCropChange = { crop = it }
                     )
+                    if (cropMode) {
+                        CropOverlay(
+                            crop = crop,
+                            onCropChange = { crop = it }
+                        )
+                    }
                 }
                 if (!cropMode) IconButton(
                     onClick = {
