@@ -28,6 +28,9 @@ object AppLockManager {
     private val _isUnlocked = MutableStateFlow(false)
     val isUnlocked: StateFlow<Boolean> = _isUnlocked.asStateFlow()
 
+    private val _privacyUnlocked = MutableStateFlow(false)
+    val privacyUnlocked: StateFlow<Boolean> = _privacyUnlocked.asStateFlow()
+
     // Synchronous snapshot kept in sync by the gate UI.
     @Volatile
     var lockEnabled: Boolean = false
@@ -45,8 +48,17 @@ object AppLockManager {
         _isUnlocked.value = false
     }
 
+    fun unlockPrivacy() {
+        _privacyUnlocked.value = true
+    }
+
+    fun lockPrivacy() {
+        _privacyUnlocked.value = false
+    }
+
     fun onBackground() {
         backgroundAtElapsed = SystemClock.elapsedRealtime()
+        _privacyUnlocked.value = false
         if (lockEnabled && backgroundTimeoutSec <= 0) {
             _isUnlocked.value = false
         }

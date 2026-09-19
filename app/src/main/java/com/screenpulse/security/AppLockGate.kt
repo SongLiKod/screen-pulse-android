@@ -85,7 +85,7 @@ fun AppLockGate(
 }
 
 @Composable
-private fun LockScreen(
+internal fun LockScreen(
     biometricEnabled: Boolean,
     pinSalt: String,
     pinHash: String,
