@@ -109,6 +109,7 @@ class MainActivity : AppCompatActivity() {
                         composable(Screen.VideoList.route) {
                             val customSaveTreeUri by settingsViewModel.customSaveTreeUri.collectAsState()
                             VideoListScreen(
+                                settingsViewModel = settingsViewModel,
                                 customSaveTreeUri = customSaveTreeUri,
                                 onBack = { navController.popBackStack() },
                                 onVideoClick = { filePath ->

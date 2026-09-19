@@ -34,10 +34,14 @@ import com.screenpulse.R
 import com.screenpulse.compress.CompressTracker
 import com.screenpulse.compress.CompressUiState
 import com.screenpulse.edit.VideoEditEngine
+import com.screenpulse.security.AppLockManager
+import com.screenpulse.security.AppLockPinDialog
+import com.screenpulse.security.LockScreen
 import com.screenpulse.security.PrivacyStore
 import com.screenpulse.util.LogManager
 import com.screenpulse.util.VideoFileActions
 import com.screenpulse.util.VideoThumbnailLoader
+import com.screenpulse.viewmodel.SettingsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -59,6 +63,7 @@ data class VideoItem(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoListScreen(
+    settingsViewModel: SettingsViewModel,
     customSaveTreeUri: String = "",
     onBack: () -> Unit,
     onVideoClick: (String) -> Unit,
@@ -68,20 +73,31 @@ fun VideoListScreen(
     var videos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
     var showDeleteDialog by remember { mutableStateOf<VideoItem?>(null) }
     var showRenameDialog by remember { mutableStateOf<VideoItem?>(null) }
-    var privacyMode by remember { mutableStateOf(false) }
+    var showPrivacyAuth by remember { mutableStateOf(false) }
+    var showSetPinDialog by remember { mutableStateOf(false) }
+
+    val privacyUnlocked by AppLockManager.privacyUnlocked.collectAsState()
+    val appLockBiometric by settingsViewModel.appLockBiometric.collectAsState()
+    val appLockPinHash by settingsViewModel.appLockPinHash.collectAsState()
+    val appLockPinSalt by settingsViewModel.appLockPinSalt.collectAsState()
     val compressInfos by WorkManager.getInstance(context)
         .getWorkInfosByTagFlow(CompressTracker.TAG)
         .collectAsState(initial = emptyList())
 
     fun refreshVideos() {
         val all = loadVideos(context, customSaveTreeUri)
-        videos = all.filter { if (privacyMode) it.isPrivate else !it.isPrivate }
+        videos = all.filter { if (privacyUnlocked) it.isPrivate else !it.isPrivate }
     }
 
-    LaunchedEffect(customSaveTreeUri, privacyMode) {
+    LaunchedEffect(customSaveTreeUri, privacyUnlocked) {
         refreshVideos()
     }
 
+    DisposableEffect(Unit) {
+        onDispose { AppLockManager.lockPrivacy() }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -92,9 +108,17 @@ fun VideoListScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { privacyMode = !privacyMode }) {
+                    IconButton(onClick = {
+                        if (privacyUnlocked) {
+                            AppLockManager.lockPrivacy()
+                        } else if (appLockPinHash.isEmpty()) {
+                            showSetPinDialog = true
+                        } else {
+                            showPrivacyAuth = true
+                        }
+                    }) {
                         Icon(
-                            if (privacyMode) Icons.Default.LockOpen else Icons.Default.Lock,
+                            if (privacyUnlocked) Icons.Default.LockOpen else Icons.Default.Lock,
                             contentDescription = stringResource(R.string.cd_privacy_mode)
                         )
                     }
@@ -127,7 +151,7 @@ fun VideoListScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        stringResource(if (privacyMode) R.string.privacy_mode_empty else R.string.no_videos),
+                        stringResource(if (privacyUnlocked) R.string.privacy_mode_empty else R.string.no_videos),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 16.sp
                     )
@@ -207,6 +231,33 @@ fun VideoListScreen(
                 }
             )
         }
+    }
+
+    if (showPrivacyAuth) {
+        LockScreen(
+            biometricEnabled = appLockBiometric,
+            pinSalt = appLockPinSalt,
+            pinHash = appLockPinHash,
+            onUnlocked = {
+                AppLockManager.unlockPrivacy()
+                showPrivacyAuth = false
+            }
+        )
+    }
+
+    if (showSetPinDialog) {
+        AppLockPinDialog(
+            requireCurrent = false,
+            currentSalt = appLockPinSalt,
+            currentHash = appLockPinHash,
+            onDismiss = { showSetPinDialog = false },
+            onConfirmed = { newPin ->
+                settingsViewModel.setAppLockPin(newPin)
+                AppLockManager.unlockPrivacy()
+                showSetPinDialog = false
+            }
+        )
+    }
     }
 }
 
