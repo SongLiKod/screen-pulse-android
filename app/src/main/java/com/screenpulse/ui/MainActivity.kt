@@ -25,6 +25,8 @@ import androidx.navigation.navArgument
 import com.screenpulse.navigation.Screen
 import com.screenpulse.navigation.decodePath
 import com.screenpulse.repository.ThemeMode
+import com.screenpulse.security.AppLockGate
+import com.screenpulse.security.AppLockManager
 import com.screenpulse.ui.home.HomeScreen
 import com.screenpulse.ui.log.LogScreen
 import com.screenpulse.ui.preview.VideoPreviewScreen
@@ -76,6 +78,10 @@ class MainActivity : AppCompatActivity() {
                     val navController = rememberNavController()
                     val recordingViewModel: RecordingViewModel = viewModel()
 
+                    AppLockGate(
+                        settingsViewModel = settingsViewModel,
+                        navController = navController
+                    ) {
                     NavHost(
                         navController = navController,
                         startDestination = Screen.Home.route
@@ -138,6 +144,7 @@ class MainActivity : AppCompatActivity() {
                             )
                         }
                     }
+                    }
                 }
             }
         }
@@ -151,6 +158,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        AppLockManager.onForeground()
         val filter = IntentFilter(ProjectionRequestBus.REQUEST_PROJECTION_ACTION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(projectionRequestReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -162,6 +170,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        AppLockManager.onBackground()
         runCatching { unregisterReceiver(projectionRequestReceiver) }
     }
 

@@ -119,6 +119,8 @@ dependencies {
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

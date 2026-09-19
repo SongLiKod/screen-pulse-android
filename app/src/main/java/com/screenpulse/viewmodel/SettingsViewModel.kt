@@ -102,6 +102,44 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val captureProtectedContent: StateFlow<Boolean> = repository.captureProtectedContent
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val appLockEnabled: StateFlow<Boolean> = repository.appLockEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val appLockScope: StateFlow<AppLockScope> = repository.appLockScope
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppLockScope.WHOLE_APP)
+
+    val appLockBiometric: StateFlow<Boolean> = repository.appLockBiometric
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    val appLockBackgroundTimeout: StateFlow<Int> = repository.appLockBackgroundTimeout
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
+
+    val appLockPinHash: StateFlow<String> = repository.appLockPinHash
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    val appLockPinSalt: StateFlow<String> = repository.appLockPinSalt
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    fun setAppLockEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.setAppLockEnabled(enabled) }
+    }
+    fun setAppLockScope(scope: AppLockScope) {
+        viewModelScope.launch { repository.setAppLockScope(scope) }
+    }
+    fun setAppLockBiometric(enabled: Boolean) {
+        viewModelScope.launch { repository.setAppLockBiometric(enabled) }
+    }
+    fun setAppLockBackgroundTimeout(seconds: Int) {
+        viewModelScope.launch { repository.setAppLockBackgroundTimeout(seconds) }
+    }
+    fun setAppLockPin(pin: String) {
+        viewModelScope.launch {
+            val salt = com.screenpulse.security.AppLockManager.newSalt()
+            val hash = com.screenpulse.security.AppLockManager.hashPin(pin, salt)
+            repository.setAppLockPin(hash, salt)
+        }
+    }
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             RecordingCache.ensureConfigLoaded(getApplication())
