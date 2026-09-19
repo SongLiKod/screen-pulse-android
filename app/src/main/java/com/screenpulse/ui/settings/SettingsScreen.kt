@@ -982,7 +982,7 @@ private fun AboutCard() {
     val versionName = remember {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull().orEmpty().ifBlank { "2.3.1" }
+        }.getOrNull().orEmpty().ifBlank { "2.4.0" }
     }
 
     DisposableEffect(Unit) {
