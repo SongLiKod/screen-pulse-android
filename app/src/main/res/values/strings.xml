@@ -336,4 +336,7 @@
     <string name="app_lock_use_pin">Use PIN</string>
     <string name="app_lock_unlock">Unlock</string>
     <string name="app_lock_biometric_unavailable">Biometrics unavailable, use PIN</string>
+    <string name="cd_privacy_mode">Toggle private videos</string>
+    <string name="cd_toggle_private">Mark private</string>
+    <string name="privacy_mode_empty">No private videos</string>
 </resources>

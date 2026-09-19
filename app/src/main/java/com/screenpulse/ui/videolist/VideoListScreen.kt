@@ -34,6 +34,7 @@ import com.screenpulse.R
 import com.screenpulse.compress.CompressTracker
 import com.screenpulse.compress.CompressUiState
 import com.screenpulse.edit.VideoEditEngine
+import com.screenpulse.security.PrivacyStore
 import com.screenpulse.util.LogManager
 import com.screenpulse.util.VideoFileActions
 import com.screenpulse.util.VideoThumbnailLoader
@@ -51,7 +52,8 @@ data class VideoItem(
     val size: Long,
     val lastModified: Long,
     val duration: String,
-    val displayPath: String
+    val displayPath: String,
+    val isPrivate: Boolean = false
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -66,15 +68,17 @@ fun VideoListScreen(
     var videos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
     var showDeleteDialog by remember { mutableStateOf<VideoItem?>(null) }
     var showRenameDialog by remember { mutableStateOf<VideoItem?>(null) }
+    var privacyMode by remember { mutableStateOf(false) }
     val compressInfos by WorkManager.getInstance(context)
         .getWorkInfosByTagFlow(CompressTracker.TAG)
         .collectAsState(initial = emptyList())
 
     fun refreshVideos() {
-        videos = loadVideos(context, customSaveTreeUri)
+        val all = loadVideos(context, customSaveTreeUri)
+        videos = all.filter { if (privacyMode) it.isPrivate else !it.isPrivate }
     }
 
-    LaunchedEffect(customSaveTreeUri) {
+    LaunchedEffect(customSaveTreeUri, privacyMode) {
         refreshVideos()
     }
 
@@ -88,6 +92,12 @@ fun VideoListScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { privacyMode = !privacyMode }) {
+                        Icon(
+                            if (privacyMode) Icons.Default.LockOpen else Icons.Default.Lock,
+                            contentDescription = stringResource(R.string.cd_privacy_mode)
+                        )
+                    }
                     IconButton(onClick = { refreshVideos() }) {
                         Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_refresh))
                     }
@@ -117,7 +127,7 @@ fun VideoListScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        stringResource(R.string.no_videos),
+                        stringResource(if (privacyMode) R.string.privacy_mode_empty else R.string.no_videos),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 16.sp
                     )
@@ -142,7 +152,11 @@ fun VideoListScreen(
                         onShare = { shareVideo(context, video) },
                         onExport = { exportVideo(context, video) },
                         onTrim = { onVideoTrim(video.displayPath) },
-                        onRetryCompress = { CompressTracker.retry(context, video.displayPath) }
+                        onRetryCompress = { CompressTracker.retry(context, video.displayPath) },
+                        onTogglePrivate = {
+                            PrivacyStore.setPrivate(context, video.displayPath, !video.isPrivate)
+                            refreshVideos()
+                        }
                     )
                 }
             }
@@ -156,7 +170,7 @@ fun VideoListScreen(
                 confirmButton = {
                     TextButton(onClick = {
                          deleteVideo(context, video)
-                        videos = loadVideos(context, customSaveTreeUri)
+                        refreshVideos()
                         showDeleteDialog = null
                     }) {
                         Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
@@ -184,7 +198,7 @@ fun VideoListScreen(
                 confirmButton = {
                     TextButton(onClick = {
                          renameVideo(context, video, newName)
-                        videos = loadVideos(context, customSaveTreeUri)
+                        refreshVideos()
                         showRenameDialog = null
                     }) { Text(stringResource(R.string.rename)) }
                 },
@@ -206,7 +220,8 @@ private fun VideoCard(
     onShare: () -> Unit,
     onExport: () -> Unit,
     onTrim: () -> Unit,
-    onRetryCompress: () -> Unit
+    onRetryCompress: () -> Unit,
+    onTogglePrivate: () -> Unit
 ) {
     val context = LocalContext.current
     var thumbnail by remember(video.displayPath) { mutableStateOf<Bitmap?>(null) }
@@ -317,6 +332,13 @@ private fun VideoCard(
                         }
                     }
                 }
+                IconButton(onClick = onTogglePrivate) {
+                    Icon(
+                        imageVector = if (video.isPrivate) Icons.Default.Lock else Icons.Default.LockOpen,
+                        contentDescription = stringResource(R.string.cd_toggle_private),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
             Row(
@@ -401,7 +423,8 @@ private fun loadVideos(context: Context, customSaveTreeUri: String): List<VideoI
                                 size = doc.length(),
                                 lastModified = doc.lastModified(),
                                 duration = duration,
-                                displayPath = doc.uri.toString()
+                                displayPath = doc.uri.toString(),
+                                isPrivate = PrivacyStore.isPrivate(context, doc.uri.toString())
                             )
                         )
                     }
@@ -428,7 +451,8 @@ private fun loadVideos(context: Context, customSaveTreeUri: String): List<VideoI
                         size = file.length(),
                         lastModified = file.lastModified(),
                         duration = duration,
-                        displayPath = file.absolutePath
+                        displayPath = file.absolutePath,
+                        isPrivate = PrivacyStore.isPrivate(context, file.absolutePath)
                     )
                 )
             }
@@ -458,6 +482,7 @@ private fun loadCustomSaveTreeUri(context: Context): Uri? {
 }
 
 private fun deleteVideo(context: Context, video: VideoItem) {
+    PrivacyStore.remove(context, video.displayPath)
     video.file?.let { file ->
         VideoEditEngine.coverFileFor(file.absolutePath)?.delete()
         file.delete()
@@ -476,7 +501,10 @@ private fun renameVideo(context: Context, video: VideoItem, newName: String) {
     if (video.file != null) {
         val newFile = File(video.file.parent, fileName)
         val cover = VideoEditEngine.coverFileFor(video.file.absolutePath)
-        video.file.renameTo(newFile)
+        val renamed = video.file.renameTo(newFile)
+        if (renamed) {
+            PrivacyStore.rename(context, video.displayPath, newFile.absolutePath)
+        }
         cover?.takeIf { it.exists() }?.renameTo(File(newFile.parent, newFile.name.substringBeforeLast('.') + ".cover.jpg"))
         VideoThumbnailLoader.invalidate(video.displayPath)
     }
