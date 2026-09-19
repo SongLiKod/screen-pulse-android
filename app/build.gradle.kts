@@ -20,7 +20,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 3
-        versionName = "2.3.1"
+        versionName = "2.4.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -118,6 +118,8 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

@@ -31,6 +31,8 @@ import com.screenpulse.R
 import com.screenpulse.repository.*
 import com.screenpulse.floatingwindow.FloatingRegionSelectService
 import com.screenpulse.permission.PermissionManager
+import com.screenpulse.security.AppLockManager
+import com.screenpulse.security.AppLockPinDialog
 import com.screenpulse.update.AppUpdateManager
 import com.screenpulse.update.InstallLaunchResult
 import com.screenpulse.update.UpdateCheckResult
@@ -77,8 +79,16 @@ fun SettingsScreen(
     val floatingWindowPersistent by settingsViewModel.floatingWindowPersistent.collectAsState()
     val captureProtectedContent by settingsViewModel.captureProtectedContent.collectAsState()
     val savedRegions by settingsViewModel.savedRegions.collectAsState()
+    val appLockEnabled by settingsViewModel.appLockEnabled.collectAsState()
+    val appLockScope by settingsViewModel.appLockScope.collectAsState()
+    val appLockBiometric by settingsViewModel.appLockBiometric.collectAsState()
+    val appLockBackgroundTimeout by settingsViewModel.appLockBackgroundTimeout.collectAsState()
+    val appLockPinHash by settingsViewModel.appLockPinHash.collectAsState()
+    val appLockPinSalt by settingsViewModel.appLockPinSalt.collectAsState()
 
     var showCaptureProtectedDialog by remember { mutableStateOf(false) }
+    var showAppLockPinDialog by remember { mutableStateOf(false) }
+    var appLockPinDialogRequireCurrent by remember { mutableStateOf(false) }
     var customWidthText by remember(customResolutionWidth) { mutableStateOf(customResolutionWidth.toString()) }
     var customHeightText by remember(customResolutionHeight) { mutableStateOf(customResolutionHeight.toString()) }
 
@@ -682,11 +692,215 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+            SectionTitle(stringResource(R.string.section_app_lock))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.app_lock_enable), fontWeight = FontWeight.Medium)
+                        Text(
+                            stringResource(R.string.app_lock_enable_desc),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = appLockEnabled,
+                        onCheckedChange = { enable ->
+                            if (enable) {
+                                if (appLockPinHash.isEmpty()) {
+                                    appLockPinDialogRequireCurrent = false
+                                    showAppLockPinDialog = true
+                                } else {
+                                    settingsViewModel.setAppLockEnabled(true)
+                                    AppLockManager.unlock()
+                                }
+                            } else {
+                                settingsViewModel.setAppLockEnabled(false)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    )
+                }
+            }
+
+            if (appLockEnabled) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text(
+                            stringResource(R.string.app_lock_scope),
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp)
+                        )
+                        AppLockScope.entries.forEach { scope ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { settingsViewModel.setAppLockScope(scope) }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = appLockScope == scope,
+                                    onClick = { settingsViewModel.setAppLockScope(scope) },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = MaterialTheme.colorScheme.primary
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = when (scope) {
+                                        AppLockScope.WHOLE_APP -> stringResource(R.string.app_lock_scope_app)
+                                        AppLockScope.VIDEO_LIST_ONLY -> stringResource(R.string.app_lock_scope_videos)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                val bioAvailable = remember(context) { AppLockManager.biometricAvailable(context) }
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.app_lock_biometric), fontWeight = FontWeight.Medium)
+                            Text(
+                                text = if (bioAvailable) stringResource(R.string.app_lock_biometric_desc)
+                                else stringResource(R.string.app_lock_no_biometric),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = appLockBiometric && bioAvailable,
+                            enabled = bioAvailable,
+                            onCheckedChange = { settingsViewModel.setAppLockBiometric(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text(
+                            stringResource(R.string.app_lock_bg_timeout),
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp)
+                        )
+                        val timeoutOptions = listOf(
+                            0 to stringResource(R.string.app_lock_timeout_immediate),
+                            30 to stringResource(R.string.app_lock_timeout_30),
+                            60 to stringResource(R.string.app_lock_timeout_60),
+                            300 to stringResource(R.string.app_lock_timeout_300)
+                        )
+                        timeoutOptions.forEach { (seconds, label) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { settingsViewModel.setAppLockBackgroundTimeout(seconds) }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = appLockBackgroundTimeout == seconds,
+                                    onClick = { settingsViewModel.setAppLockBackgroundTimeout(seconds) },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = MaterialTheme.colorScheme.primary
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(label)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        appLockPinDialogRequireCurrent = appLockPinHash.isNotEmpty()
+                        showAppLockPinDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text(stringResource(if (appLockPinHash.isEmpty()) R.string.app_lock_set_pin else R.string.app_lock_change_pin))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
             SectionTitle(stringResource(R.string.section_about))
             AboutCard()
 
             Spacer(modifier = Modifier.height(32.dp))
         }
+    }
+
+    if (showAppLockPinDialog) {
+        AppLockPinDialog(
+            requireCurrent = appLockPinDialogRequireCurrent,
+            currentSalt = appLockPinSalt,
+            currentHash = appLockPinHash,
+            onDismiss = { showAppLockPinDialog = false },
+            onConfirmed = { newPin ->
+                settingsViewModel.setAppLockPin(newPin)
+                if (!appLockPinDialogRequireCurrent) {
+                    settingsViewModel.setAppLockEnabled(true)
+                }
+                AppLockManager.unlock()
+                showAppLockPinDialog = false
+            }
+        )
     }
 
     if (showCaptureProtectedDialog) {
@@ -768,7 +982,7 @@ private fun AboutCard() {
     val versionName = remember {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull().orEmpty().ifBlank { "2.3.1" }
+        }.getOrNull().orEmpty().ifBlank { "2.4.0" }
     }
 
     DisposableEffect(Unit) {

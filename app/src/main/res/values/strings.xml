@@ -307,4 +307,33 @@
     <string name="update_need_permission">Allow ScreenPulse to install unknown apps, then tap Install.</string>
     <string name="update_grant_permission">Allow install</string>
     <string name="update_install_failed">Unable to start the installer</string>
+
+    <string name="section_app_lock">App Lock</string>
+    <string name="app_lock_enable">Enable app lock</string>
+    <string name="app_lock_enable_desc">Require a PIN or biometric before opening protected screens</string>
+    <string name="app_lock_scope">Lock scope</string>
+    <string name="app_lock_scope_app">Whole app</string>
+    <string name="app_lock_scope_videos">Video list only</string>
+    <string name="app_lock_biometric">Allow fingerprint / face unlock</string>
+    <string name="app_lock_biometric_desc">Use biometrics when available, PIN as fallback</string>
+    <string name="app_lock_no_biometric">No enrolled biometric on this device</string>
+    <string name="app_lock_bg_timeout">Re-lock after going to background</string>
+    <string name="app_lock_timeout_immediate">Immediately</string>
+    <string name="app_lock_timeout_30">After 30 seconds</string>
+    <string name="app_lock_timeout_60">After 1 minute</string>
+    <string name="app_lock_timeout_300">After 5 minutes</string>
+    <string name="app_lock_set_pin">Set PIN</string>
+    <string name="app_lock_change_pin">Change PIN</string>
+    <string name="app_lock_pin_current">Current PIN</string>
+    <string name="app_lock_pin_new">New PIN (at least 4 digits)</string>
+    <string name="app_lock_pin_confirm">Confirm PIN</string>
+    <string name="app_lock_pin_wrong">Wrong PIN</string>
+    <string name="app_lock_pin_too_short">PIN must be at least 4 digits</string>
+    <string name="app_lock_pin_mismatch">PINs do not match</string>
+    <string name="app_lock_title">Locked</string>
+    <string name="app_lock_subtitle">Enter your PIN or use biometrics to unlock</string>
+    <string name="app_lock_use_biometric">Unlock with biometrics</string>
+    <string name="app_lock_use_pin">Use PIN</string>
+    <string name="app_lock_unlock">Unlock</string>
+    <string name="app_lock_biometric_unavailable">Biometrics unavailable, use PIN</string>
 </resources>

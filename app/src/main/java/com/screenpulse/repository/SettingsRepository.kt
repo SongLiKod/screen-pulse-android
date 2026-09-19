@@ -47,6 +47,12 @@ class SettingsRepository(private val context: Context) {
         val FLOATING_WINDOW_PERSISTENT = booleanPreferencesKey("floating_window_persistent")
         val CAPTURE_PROTECTED_CONTENT = booleanPreferencesKey("capture_protected_content")
         val SAVED_REGIONS = stringPreferencesKey("saved_regions")
+        val APP_LOCK_ENABLED = booleanPreferencesKey("app_lock_enabled")
+        val APP_LOCK_SCOPE = intPreferencesKey("app_lock_scope")
+        val APP_LOCK_BIOMETRIC = booleanPreferencesKey("app_lock_biometric")
+        val APP_LOCK_BG_TIMEOUT = intPreferencesKey("app_lock_bg_timeout")
+        val APP_LOCK_PIN_HASH = stringPreferencesKey("app_lock_pin_hash")
+        val APP_LOCK_PIN_SALT = stringPreferencesKey("app_lock_pin_salt")
     }
 
     val customSaveTreeUri: Flow<String> = context.dataStore.data.map { prefs ->
@@ -59,6 +65,30 @@ class SettingsRepository(private val context: Context) {
 
     val captureProtectedContent: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[Keys.CAPTURE_PROTECTED_CONTENT] ?: false
+    }
+
+    val appLockEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.APP_LOCK_ENABLED] ?: false
+    }
+
+    val appLockScope: Flow<AppLockScope> = context.dataStore.data.map { prefs ->
+        AppLockScope.fromValue(prefs[Keys.APP_LOCK_SCOPE] ?: AppLockScope.WHOLE_APP.value)
+    }
+
+    val appLockBiometric: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.APP_LOCK_BIOMETRIC] ?: true
+    }
+
+    val appLockBackgroundTimeout: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[Keys.APP_LOCK_BG_TIMEOUT] ?: 30
+    }
+
+    val appLockPinHash: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.APP_LOCK_PIN_HASH] ?: ""
+    }
+
+    val appLockPinSalt: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.APP_LOCK_PIN_SALT] ?: ""
     }
 
     suspend fun setCustomSaveTreeUri(uri: String) {
@@ -304,6 +334,29 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setCaptureProtectedContent(enabled: Boolean) {
         context.dataStore.edit { it[Keys.CAPTURE_PROTECTED_CONTENT] = enabled }
+    }
+
+    suspend fun setAppLockEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.APP_LOCK_ENABLED] = enabled }
+    }
+
+    suspend fun setAppLockScope(scope: AppLockScope) {
+        context.dataStore.edit { it[Keys.APP_LOCK_SCOPE] = scope.value }
+    }
+
+    suspend fun setAppLockBiometric(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.APP_LOCK_BIOMETRIC] = enabled }
+    }
+
+    suspend fun setAppLockBackgroundTimeout(seconds: Int) {
+        context.dataStore.edit { it[Keys.APP_LOCK_BG_TIMEOUT] = seconds }
+    }
+
+    suspend fun setAppLockPin(hash: String, salt: String) {
+        context.dataStore.edit {
+            it[Keys.APP_LOCK_PIN_HASH] = hash
+            it[Keys.APP_LOCK_PIN_SALT] = salt
+        }
     }
 }
 

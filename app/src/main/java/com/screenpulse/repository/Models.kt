@@ -120,3 +120,12 @@ enum class Language(val value: String, val tag: String) {
         fun fromValue(value: String): Language = entries.firstOrNull { it.value == value } ?: SYSTEM
     }
 }
+
+enum class AppLockScope(val value: Int) {
+    WHOLE_APP(0),
+    VIDEO_LIST_ONLY(1);
+
+    companion object {
+        fun fromValue(value: Int): AppLockScope = entries.firstOrNull { it.value == value } ?: WHOLE_APP
+    }
+}
