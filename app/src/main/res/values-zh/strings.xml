@@ -25,6 +25,9 @@
     <string name="audio_system_only_desc">仅收录系统内部声音</string>
     <string name="audio_mic_only_desc">仅收录外界人声并降噪</string>
     <string name="audio_mixed_desc">同时收录双音源声音</string>
+    <string name="audio_fallback_channel">录音提示</string>
+    <string name="audio_fallback_mic">检测到系统声音为空（当前应用可能禁止第三方内录），本次录制已自动切换为「系统+麦克风」收音</string>
+    <string name="audio_fallback_no_mic">检测到系统声音为空（当前应用可能禁止第三方内录），且麦克风不可用。请授予麦克风权限或改用「麦克风」模式</string>
     <string name="record_mode">录制模式</string>
     <string name="full_screen">全屏</string>
     <string name="custom_region">自定义区域</string>

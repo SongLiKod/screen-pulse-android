@@ -34,9 +34,11 @@ import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Surface
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.screenpulse.R
 import com.screenpulse.compress.CompressTracker
@@ -96,6 +98,20 @@ class ScreenRecordService : Service() {
         const val EXTRA_CAPTURE_PROTECTED_CONTENT = "capture_protected_content"
         const val CHANNEL_ID = "screen_pulse_recording"
         const val NOTIFICATION_ID = 1001
+
+        /** One-shot alert shown when system audio turns out to be unusable. */
+        const val ALERT_CHANNEL_ID = "screen_pulse_recording_alert"
+        const val ALERT_NOTIFICATION_ID = 1002
+
+        /**
+         * Target apps that block third-party playback capture (e.g. 抖音/红果) give us an
+         * AudioRecord that initializes fine but only ever returns silence. After this much
+         * continuous all-zero system audio we degrade the session to MIXED (mic + system).
+         */
+        private const val SYSTEM_SILENCE_FALLBACK_MS = 5_000L
+
+        /** The system AudioRecord never initialized / read() keeps failing for this long. */
+        private const val SYSTEM_CAPTURE_BROKEN_FALLBACK_MS = 2_000L
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -140,6 +156,14 @@ class ScreenRecordService : Service() {
     private var audioCodec: MediaCodec? = null
     private var audioRecordBuffer: ByteArray? = null
     private var audioPtsUs = 0L
+
+    // --- SYSTEM_ONLY silence detection / auto-fallback state (audio encode thread only) ---
+    // uptimeMillis() of the first all-zero system audio read, 0 = not currently silent.
+    private var systemSilenceSinceMs = 0L
+    // uptimeMillis() of the first failed system audio read, 0 = capture is healthy.
+    private var systemCaptureBrokenSinceMs = 0L
+    // Guarantees the fallback (and its toast/notification) happens at most once per session.
+    private var audioFallbackTriggered = false
     @Volatile private var recordingPtsBaseNs = 0L
     private var lastAudioMuxPtsUs = -1L
     private var lastVideoMuxPtsUs = -1L
@@ -148,7 +172,7 @@ class ScreenRecordService : Service() {
     private var currentResolution = Resolution.R1080P
     private var currentFrameRate = FrameRate.FPS_30
     private var currentBitrate = 8000000
-    private var currentAudioMode = AudioMode.SYSTEM_ONLY
+    @Volatile private var currentAudioMode = AudioMode.SYSTEM_ONLY
     private var currentRecordMode = RecordMode.FULL_SCREEN
     private var currentCompressionMode = CompressionMode.BALANCED
     private var customWidth = 0
@@ -458,6 +482,7 @@ class ScreenRecordService : Service() {
         try {
             NativeBridge.nativeInit()
             resetPtsClock()
+            resetAudioFallbackState()
 
             setupMediaMuxer()
             setupMediaCodec(codecWidth, codecHeight)
@@ -1012,6 +1037,10 @@ class ScreenRecordService : Service() {
             try {
                 while (isActive && isRecording) {
                     if (isPaused) {
+                        // Paused time must not count towards the silence thresholds,
+                        // otherwise resuming after a pause would trigger instantly.
+                        systemSilenceSinceMs = 0L
+                        systemCaptureBrokenSinceMs = 0L
                         delay(10)
                         continue
                     }
@@ -1029,8 +1058,25 @@ class ScreenRecordService : Service() {
                         AudioMode.SYSTEM_ONLY -> {
                             val readSize = systemAudioRecord?.read(buffer, 0, buffer.size) ?: 0
                             if (readSize > 0) {
+                                // Health check runs on the raw PCM, before volume scaling,
+                                // so a user-set system volume of 0 is not mistaken for a
+                                // blocked capture.
+                                trackSystemAudioHealth(buffer, readSize)
                                 applyPcmVolume(buffer, readSize, systemVolume)
                                 encodeAudioData(buffer, readSize)
+                            } else {
+                                // Recorder missing or read() failed. Without a pause this
+                                // branch would spin the loop at 100% CPU.
+                                val now = SystemClock.uptimeMillis()
+                                if (systemCaptureBrokenSinceMs == 0L) systemCaptureBrokenSinceMs = now
+                                systemSilenceSinceMs = 0L
+                                if (now - systemCaptureBrokenSinceMs >= SYSTEM_CAPTURE_BROKEN_FALLBACK_MS) {
+                                    triggerAudioFallback(
+                                        if (systemAudioRecord == null) "system AudioRecord not initialized"
+                                        else "system AudioRecord read failed"
+                                    )
+                                }
+                                delay(20)
                             }
                         }
                         AudioMode.MIXED -> {
@@ -1057,6 +1103,103 @@ class ScreenRecordService : Service() {
                 }
             } catch (_: CancellationException) {
                 // Coroutine cancelled (stop or destroy) – exit cleanly
+            }
+        }
+    }
+
+    /** Fresh recording session: allow the silence fallback to fire again. */
+    private fun resetAudioFallbackState() {
+        audioFallbackTriggered = false
+        systemSilenceSinceMs = 0L
+        systemCaptureBrokenSinceMs = 0L
+    }
+
+    /**
+     * Watches the PCM coming from the system audio recorder while in SYSTEM_ONLY.
+     *
+     * Apps that block third-party playback capture (android:allowAudioPlaybackCapture="false"
+     * or ALLOW_CAPTURE_BY_SYSTEM, e.g. 抖音/红果) still give us an AudioRecord that initializes
+     * and reads normally, but the mixer only feeds it silence. After
+     * [SYSTEM_SILENCE_FALLBACK_MS] of continuous all-zero PCM we degrade this session to MIXED
+     * so the recording still ends up with audio.
+     */
+    private fun trackSystemAudioHealth(data: ByteArray, size: Int) {
+        val now = SystemClock.uptimeMillis()
+        if (isAllZero(data, size)) {
+            if (systemSilenceSinceMs == 0L) systemSilenceSinceMs = now
+            systemCaptureBrokenSinceMs = 0L
+            if (now - systemSilenceSinceMs >= SYSTEM_SILENCE_FALLBACK_MS) {
+                triggerAudioFallback("silent for ${now - systemSilenceSinceMs}ms")
+            }
+        } else {
+            systemSilenceSinceMs = 0L
+            systemCaptureBrokenSinceMs = 0L
+        }
+    }
+
+    private fun isAllZero(data: ByteArray, size: Int): Boolean {
+        for (i in 0 until size) {
+            if (data[i].toInt() != 0) return false
+        }
+        return true
+    }
+
+    /**
+     * Runs on the audio encode thread. Switches this session to MIXED (system + mic) when the
+     * microphone is usable, otherwise only tells the user why there is no sound.
+     */
+    private fun triggerAudioFallback(reason: String) {
+        if (audioFallbackTriggered || !isRecording || isStopping || isPaused) return
+        if (currentAudioMode != AudioMode.SYSTEM_ONLY) return
+        audioFallbackTriggered = true
+        systemSilenceSinceMs = 0L
+        systemCaptureBrokenSinceMs = 0L
+
+        if (micAudioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+            // Mic is never created in SYSTEM_ONLY – create it now (requires RECORD_AUDIO).
+            setupMicAudioRecord()
+        }
+        val micReady = micAudioRecord?.state == AudioRecord.STATE_INITIALIZED
+
+        if (micReady) {
+            currentAudioMode = AudioMode.MIXED
+            LogManager.log(
+                LogManager.TAG_RECORD,
+                "audio fallback: SYSTEM_ONLY -> MIXED ($reason); " +
+                    "target app likely blocks third-party playback capture"
+            )
+            showAudioFallbackNotice(getString(R.string.audio_fallback_mic))
+        } else {
+            LogManager.log(
+                LogManager.TAG_RECORD,
+                "audio fallback: system audio unusable ($reason) and microphone unavailable"
+            )
+            showAudioFallbackNotice(getString(R.string.audio_fallback_no_mic))
+        }
+    }
+
+    /** Toast + one-shot notification; the recording itself keeps running. */
+    private fun showAudioFallbackNotice(message: String) {
+        serviceScope.launch(Dispatchers.Main) {
+            runCatching {
+                Toast.makeText(this@ScreenRecordService, message, Toast.LENGTH_LONG).show()
+            }
+            runCatching {
+                val contentIntent = PendingIntent.getActivity(
+                    this@ScreenRecordService, 0,
+                    packageManager.getLaunchIntentForPackage(packageName),
+                    PendingIntent.FLAG_IMMUTABLE
+                )
+                val notification = NotificationCompat.Builder(this@ScreenRecordService, ALERT_CHANNEL_ID)
+                    .setContentTitle(getString(R.string.app_name))
+                    .setContentText(message)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                    .setSmallIcon(R.drawable.ic_record)
+                    .setContentIntent(contentIntent)
+                    .setAutoCancel(true)
+                    .build()
+                getSystemService(NotificationManager::class.java)
+                    .notify(ALERT_NOTIFICATION_ID, notification)
             }
         }
     }
@@ -1778,8 +1921,16 @@ class ScreenRecordService : Service() {
         ).apply {
             description = "ScreenPulse recording service"
         }
+        val alertChannel = NotificationChannel(
+            ALERT_CHANNEL_ID,
+            getString(R.string.audio_fallback_channel),
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "ScreenPulse recording alerts"
+        }
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(channel)
+        manager.createNotificationChannel(alertChannel)
     }
 
     private fun createNotification(): Notification {

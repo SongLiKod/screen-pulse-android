@@ -25,6 +25,9 @@
     <string name="audio_system_only_desc">Record internal audio only</string>
     <string name="audio_mic_only_desc">Record external audio only</string>
     <string name="audio_mixed_desc">Record both audio sources</string>
+    <string name="audio_fallback_channel">Recording alerts</string>
+    <string name="audio_fallback_mic">System audio is silent — the current app may block third-party internal recording. Switched to System + Microphone for this recording.</string>
+    <string name="audio_fallback_no_mic">System audio is silent (the app may block internal recording) and the microphone is unavailable. Grant the microphone permission or switch the audio mode.</string>
     <string name="record_mode">Record Mode</string>
     <string name="full_screen">Full Screen</string>
     <string name="custom_region">Custom Region</string>
